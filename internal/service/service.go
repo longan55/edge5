@@ -171,11 +171,15 @@ var (
 )
 
 type DeviceService struct {
-	deviceRepo *repository.DeviceRepository
+	deviceRepo       *repository.DeviceRepository
+	deviceStatusRepo *repository.DeviceStatusRepository
 }
 
-func NewDeviceService(deviceRepo *repository.DeviceRepository) *DeviceService {
-	return &DeviceService{deviceRepo: deviceRepo}
+func NewDeviceService(deviceRepo *repository.DeviceRepository, deviceStatusRepo *repository.DeviceStatusRepository) *DeviceService {
+	return &DeviceService{
+		deviceRepo:       deviceRepo,
+		deviceStatusRepo: deviceStatusRepo,
+	}
 }
 
 func (s *DeviceService) CreateDevice(device *model.Device) error {
@@ -214,6 +218,10 @@ func (s *DeviceService) StopDevice(id uint64) error {
 	}
 	device.Status = 0
 	return s.deviceRepo.Update(device)
+}
+
+func (s *DeviceService) GetDeviceStatus(deviceID uint64) (*model.DeviceStatus, error) {
+	return s.deviceStatusRepo.GetByDeviceID(deviceID)
 }
 
 func GenerateToken(userID uint64, username, email, roleCode string) (string, error) {

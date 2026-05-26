@@ -148,3 +148,24 @@ func (r *DeviceRepository) List(page, pageSize int, deviceType, brand string) ([
 	err = query.Offset(offset).Limit(pageSize).Find(&devices).Error
 	return devices, total, err
 }
+
+// DeviceStatusRepository provides access to device online status.
+type DeviceStatusRepository struct {
+	db *gorm.DB
+}
+
+func NewDeviceStatusRepository(db *gorm.DB) *DeviceStatusRepository {
+	return &DeviceStatusRepository{db: db}
+}
+
+func (r *DeviceStatusRepository) GetByDeviceID(deviceID uint64) (*model.DeviceStatus, error) {
+	var status model.DeviceStatus
+	err := r.db.Where("device_id = ?", deviceID).First(&status).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &status, nil
+}

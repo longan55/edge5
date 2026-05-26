@@ -390,3 +390,25 @@ func (h *DeviceHandler) Stop(c *gin.Context) {
 
 	response.Success(c, nil)
 }
+
+func (h *DeviceHandler) GetStatus(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+
+	status, err := h.service.GetDeviceStatus(id)
+	if err != nil {
+		response.Error(c, response.CodeError, "获取设备状态失败")
+		return
+	}
+
+	// 如果库里还没记录 device_status，返回默认在线状态
+	if status == nil {
+		response.Success(c, gin.H{
+			"online":         false,
+			"last_heartbeat": "",
+			"message":        "",
+		})
+		return
+	}
+
+	response.Success(c, status)
+}

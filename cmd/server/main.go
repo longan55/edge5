@@ -41,7 +41,8 @@ func run() error {
 	}
 
 	if err := initCache(); err != nil {
-		return fmt.Errorf("初始化缓存失败: %w", err)
+		global.Logger.Warn("初始化缓存失败，将跳过缓存（联调模式）", zap.Error(err))
+		global.CacheDB = nil
 	}
 
 	initConnector()
@@ -118,9 +119,11 @@ func initPlugin() {
 }
 
 func initMQTT() error {
-	// repo := repository.NewMQTTConfigRepository(global.DB)
-	// mqttService := service.NewMQTTService(repo, global.Logger)
-	// return mqttService.Connect()
+	global.MQTTClient = global.NewMqttClient()
+	if err := global.MQTTClient.Connect(); err != nil {
+		// 允许启动时连接失败（SDK 会自动重连）；status 仍可正常返回 connected=false
+		global.Logger.Warn("MQTT 初始连接失败，将依赖自动重连", zap.Error(err))
+	}
 	return nil
 }
 

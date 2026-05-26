@@ -52,16 +52,20 @@ func (my *myMqttClient) Connect() error {
 
 	my.client = mqtt.NewClient(opts)
 
-	// 初始连接（只需要做一次）
+	// 初始连接（只需要做一次），避免阻塞 HTTP 启动
 	token := my.client.Connect()
-	if token.Wait() && token.Error() != nil {
-		// 注意：即使这里连接失败，AutoReconnect=true也会在后台重试
-		// 不需要手动循环重连
-		Logger.Warn("初始连接失败，SDK会在后台重连", zap.Error(token.Error()))
+	if ok := token.WaitTimeout(3 * time.Second); !ok {
+		Logger.Warn("初始连接超时，HTTP 将继续启动（MQTT 依赖自动重连）")
+		my.init = true
+		return nil
+	}
+	if token.Error() != nil {
+		// 即使这里连接失败，AutoReconnect=true也会在后台重试
+		Logger.Warn("初始连接失败，SDK会自动重连", zap.Error(token.Error()))
 	}
 
 	my.init = true
-	return my.client.Connect().Error()
+	return token.Error()
 }
 
 func (my *myMqttClient) Close() error {

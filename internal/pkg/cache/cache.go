@@ -44,6 +44,11 @@ func NewBoltCache(opts ...CacheOption) (*BoltCache, error) {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
+	lockPath := cachePath + ".lock"
+	if _, err := os.Stat(lockPath); err == nil {
+		_ = os.Remove(lockPath)
+	}
+
 	db, err := bolt.Open(cachePath, 0644, &bolt.Options{
 		Timeout: time.Second,
 	})

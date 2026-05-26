@@ -31,7 +31,8 @@ func SetupRouter(mode string) *gin.Engine {
 	// mqttHandler := handler.NewMQTTHandler(mqttService)
 
 	deviceRepo := repository.NewDeviceRepository(global.DB)
-	deviceService := service.NewDeviceService(deviceRepo)
+	deviceStatusRepo := repository.NewDeviceStatusRepository(global.DB)
+	deviceService := service.NewDeviceService(deviceRepo, deviceStatusRepo)
 	deviceHandler := handler.NewDeviceHandler(deviceService)
 
 	r.GET("/api/captcha", authHandler.GetCaptcha)
@@ -54,20 +55,24 @@ func SetupRouter(mode string) *gin.Engine {
 				user.DELETE("/:id", userHandler.Delete)
 			}
 
-			// mqttGroup := protected.Group("/mqtt")
+			mqttRepo := repository.NewMQTTConfigRepository(global.DB)
+			mqttHandler := handler.NewMQTTHandler(mqttRepo)
+
+			mqttGroup := protected.Group("/mqtt")
 			{
-				// mqttGroup.GET("/config", mqttHandler.GetConfig)
-				// mqttGroup.PUT("/config", mqttHandler.UpdateConfig)
-				// mqttGroup.POST("/connect", mqttHandler.Connect)
-				// mqttGroup.POST("/disconnect", mqttHandler.Disconnect)
-				// mqttGroup.GET("/status", mqttHandler.GetStatus)
-				// mqttGroup.POST("/test", mqttHandler.TestConnection)
+				mqttGroup.GET("/config", mqttHandler.GetConfig)
+				mqttGroup.PUT("/config", mqttHandler.UpdateConfig)
+				mqttGroup.POST("/connect", mqttHandler.Connect)
+				mqttGroup.POST("/disconnect", mqttHandler.Disconnect)
+				mqttGroup.GET("/status", mqttHandler.GetStatus)
+				mqttGroup.POST("/test", mqttHandler.TestConnection)
 			}
 
 			deviceGroup := protected.Group("/device")
 			{
 				deviceGroup.GET("/list", deviceHandler.List)
 				deviceGroup.GET("/:id", deviceHandler.Get)
+				deviceGroup.GET("/:id/status", deviceHandler.GetStatus)
 				deviceGroup.POST("", deviceHandler.Create)
 				deviceGroup.PUT("/:id", deviceHandler.Update)
 				deviceGroup.DELETE("/:id", deviceHandler.Delete)
