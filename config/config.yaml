@@ -1,0 +1,67 @@
+gateway:
+  sn: "GWD001"
+  os: "linux"
+  arch: "arm64"
+  soc: "rk3568"
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "debug"  # debug or release
+
+database:
+  type: "sqlite3"
+  sqlite3:
+    path: "./data/edge5.db"
+  postgresql:
+    host: "localhost"
+    port: 5432
+    user: "edge5"
+    password: "password"
+    dbname: "edge5"
+    sslmode: "disable"
+
+cache:
+  type: "boltdb"
+  boltdb:
+    path: "./data/cache.db"
+    bucket: "cache_queue"
+
+mqtt:
+  enabled: true
+  broker: "tcp://127.0.0.1:1883"
+  port: 1883
+  username: ""
+  password: ""
+  client_id: "edge5-gateway"
+  keep_alive: 60
+  qos: 1
+  gateway_sn: "GWD001"
+
+log:
+  level: "debug"
+  path: "./logs"
+  pattern: "%Y%m%d.log"
+  max_age: 7
+  rotation_time: 24
+  compress: false
+
+connector:
+  reconnect_interval: 15000
+  base_delay: 1000
+  max_delay: 60000
+  factor: 2
+
+plugin:
+  enabled: true
+  grpc_port: 50051
+  plugins_dir: "./plugins"
+
+jwt:
+  secret: "edge5-secret-key-change-in-production"
+  expire: 24
+  refresh_expire: 168
+
+captcha:
+  captcha_length: 4
+  expire_time: 300

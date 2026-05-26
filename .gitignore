@@ -1,0 +1,50 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.mod.sum
+vendor/
+
+# Node
+node_modules/
+dist/
+.nuxt/
+.nitro/
+.cache/
+.parcel-cache/
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.sixth
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Build
+backend/cmd/server/server
+frontend/dist/
+
+# Temporary
+tmp/
+temp/

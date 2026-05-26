@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package edge.plugin;
+
+option go_package = "edge5/plugins/proto";
+
+service DevicePlugin {
+    rpc GetPluginInfo(InfoRequest) returns (InfoResponse);
+
+    rpc Connect(ConnectRequest) returns (ConnectResponse);
+
+    rpc Disconnect(DisconnectRequest) returns (DisconnectResponse);
+
+    rpc ReadData(ReadRequest) returns (ReadResponse);
+
+    rpc WriteData(WriteRequest) returns (WriteResponse);
+
+    rpc SubscribeData(SubscribeRequest) returns (stream DataResponse);
+}
+
+message InfoRequest {}
+
+message InfoResponse {
+    string name = 1;
+    string version = 2;
+    string device_type = 3;
+    string brand = 4;
+    repeated string protocols = 5;
+}
+
+message ConnectRequest {
+    string device_sn = 1;
+    string protocol = 2;
+    map<string, string> params = 3;
+}
+
+message ConnectResponse {
+    bool success = 1;
+    string message = 2;
+    bool is_connected = 3;
+}
+
+message DisconnectRequest {
+    string device_sn = 1;
+}
+
+message DisconnectResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ReadRequest {
+    string device_sn = 1;
+    repeated string addresses = 2;
+}
+
+message ReadResponse {
+    bool success = 1;
+    string message = 2;
+    map<string, bytes> values = 3;
+}
+
+message WriteRequest {
+    string device_sn = 1;
+    map<string, bytes> values = 2;
+}
+
+message WriteResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message SubscribeRequest {
+    string device_sn = 1;
+    repeated string addresses = 2;
+    int32 interval = 3;
+}
+
+message DataResponse {
+    string device_sn = 1;
+    map<string, bytes> values = 2;
+    int64 timestamp = 3;
+}
