@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	CONFIG       *config.Config
+	CONFIG       = config.InitConfig("")
 	DB           *gorm.DB
 	Logger       *zap.Logger
 	CacheDB      *cache.BoltCache

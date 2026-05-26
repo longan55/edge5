@@ -1,6 +1,7 @@
 package global
 
 import (
+	"edge5/config"
 	"fmt"
 	"io"
 	"os"
@@ -14,15 +15,15 @@ import (
 )
 
 func InitLogger() error {
-	if err := os.MkdirAll(CONFIG.Log.Path, os.ModeDir|os.ModePerm); err != nil {
-		return fmt.Errorf("create log dir [%s] error: %w", CONFIG.Log.Path, err)
+	if err := os.MkdirAll(config.CONFIG.Log.Path, os.ModeDir|os.ModePerm); err != nil {
+		return fmt.Errorf("create log dir [%s] error: %w", config.CONFIG.Log.Path, err)
 	}
 
 	writer, err := rotate.New(
-		path.Join(CONFIG.Log.Path, CONFIG.Log.Pattern),
-		rotate.WithLinkName(path.Join(CONFIG.Log.Path, "latest.log")),
-		rotate.WithMaxAge(time.Duration(CONFIG.Log.MaxAge)*24*time.Hour),
-		rotate.WithRotationTime(time.Duration(CONFIG.Log.RotationTime)*time.Hour),
+		path.Join(config.CONFIG.Log.Path, config.CONFIG.Log.Pattern),
+		rotate.WithLinkName(path.Join(config.CONFIG.Log.Path, "latest.log")),
+		rotate.WithMaxAge(time.Duration(config.CONFIG.Log.MaxAge)*24*time.Hour),
+		rotate.WithRotationTime(time.Duration(config.CONFIG.Log.RotationTime)*time.Hour),
 		rotate.WithHandler(rotate.HandlerFunc(CompressLog)),
 	)
 	if err != nil {
@@ -30,10 +31,10 @@ func InitLogger() error {
 	}
 
 	writerErr, err := rotate.New(
-		path.Join(CONFIG.Log.Path, "error.%Y%m%d.log"),
-		rotate.WithMaxAge(time.Duration(CONFIG.Log.MaxAge)*24*time.Hour),          //文件最大保存时间
-		rotate.WithRotationTime(time.Duration(CONFIG.Log.RotationTime)*time.Hour), //日志切割时间间隔
-		rotate.WithHandler(rotate.HandlerFunc(CompressLog)),                       //注册 日志切割时回调函数-压缩日志
+		path.Join(config.CONFIG.Log.Path, "error.%Y%m%d.log"),
+		rotate.WithMaxAge(time.Duration(config.CONFIG.Log.MaxAge)*24*time.Hour),          //文件最大保存时间
+		rotate.WithRotationTime(time.Duration(config.CONFIG.Log.RotationTime)*time.Hour), //日志切割时间间隔
+		rotate.WithHandler(rotate.HandlerFunc(CompressLog)),                              //注册 日志切割时回调函数-压缩日志
 	)
 	if err != nil {
 		return fmt.Errorf("rotate.New error: %w", err)
@@ -42,7 +43,7 @@ func InitLogger() error {
 	// 创建一个WriteSyncer，可以是os.Stdout、os.Stderr等等
 	var ws zapcore.WriteSyncer
 
-	switch CONFIG.Log.Level {
+	switch config.CONFIG.Log.Level {
 	case "debug":
 		ws = zapcore.AddSync(io.MultiWriter(writer, os.Stdout))
 	default:
@@ -51,7 +52,7 @@ func InitLogger() error {
 
 	// 配置日志级别
 	levelConf := zap.NewAtomicLevel()
-	level, err := zapcore.ParseLevel(CONFIG.Log.Level)
+	level, err := zapcore.ParseLevel(config.CONFIG.Log.Level)
 	if err != nil {
 		levelConf.SetLevel(zapcore.InfoLevel)
 	} else {
@@ -60,7 +61,7 @@ func InitLogger() error {
 
 	// 编码器配置
 	var encoderConfig zapcore.EncoderConfig
-	if CONFIG.Server.Mode == "release" {
+	if config.CONFIG.Server.Mode == "release" {
 		encoderConfig = zap.NewProductionEncoderConfig()
 	} else {
 		encoderConfig = zap.NewDevelopmentEncoderConfig()

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"edge5/config"
 	"edge5/internal/model"
 	"edge5/internal/service"
 	"edge5/internal/utils/captcha"
@@ -22,8 +23,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	var req struct {
 		Username  string `json:"username" binding:"required"`
 		Password  string `json:"password" binding:"required"`
-		CaptchaID string `json:"captcha_id" binding:"required"`
-		Captcha   string `json:"captcha" binding:"required"`
+		CaptchaID string `json:"captcha_id"`
+		Captcha   string `json:"captcha"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -31,9 +32,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	if !captcha.VerifyCaptcha(req.CaptchaID, req.Captcha) {
-		response.Error(c, response.CodeInvalidParam, "验证码错误")
-		return
+	if config.CONFIG.Server.Mode != "debug" {
+		if req.CaptchaID == "" || req.Captcha == "" {
+			response.Error(c, response.CodeInvalidParam, "验证码参数缺失")
+			return
+		}
+		if !captcha.VerifyCaptcha(req.CaptchaID, req.Captcha) {
+			response.Error(c, response.CodeInvalidParam, "验证码错误")
+			return
+		}
 	}
 
 	result, err := h.userService.Login(req.Username, req.Password, c.ClientIP())
@@ -77,6 +84,58 @@ func (h *AuthHandler) GetCaptcha(c *gin.Context) {
 		"captcha_id": id,
 		"captcha":    base64,
 	})
+}
+
+func (h *AuthHandler) Register(c *gin.Context) {
+	var req struct {
+		Username  string `json:"username" binding:"required"`
+		Password  string `json:"password" binding:"required"`
+		Nickname  string `json:"nickname"`
+		Email     string `json:"email"`
+		Phone     string `json:"phone"`
+		RoleID    uint64 `json:"role_id"`
+		CaptchaID string `json:"captcha_id"`
+		Captcha   string `json:"captcha"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, response.CodeInvalidParam, "参数错误")
+		return
+	}
+
+	if len(req.Password) < 6 {
+		response.Error(c, response.CodeInvalidParam, "密码至少6位")
+		return
+	}
+
+	if config.CONFIG.Server.Mode != "debug" {
+		if req.CaptchaID == "" || req.Captcha == "" {
+			response.Error(c, response.CodeInvalidParam, "验证码参数缺失")
+			return
+		}
+		if !captcha.VerifyCaptcha(req.CaptchaID, req.Captcha) {
+			response.Error(c, response.CodeInvalidParam, "验证码错误")
+			return
+		}
+	}
+
+	roleID := req.RoleID
+	if roleID == 0 {
+		roleID = 1
+	}
+
+	user, err := h.userService.Register(req.Username, req.Password, req.Nickname, req.Email, req.Phone, roleID, c.ClientIP())
+	if err != nil {
+		switch err {
+		case service.ErrUserExists:
+			response.Error(c, response.CodeResourceExists, "用户名已存在")
+		default:
+			response.Error(c, response.CodeError, "注册失败")
+		}
+		return
+	}
+
+	response.Success(c, user)
 }
 
 func GetUserID(c *gin.Context) uint64 {

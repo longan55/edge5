@@ -2,6 +2,7 @@ package global
 
 import (
 	"compress/gzip"
+	"edge5/config"
 	"io"
 	"os"
 
@@ -10,7 +11,7 @@ import (
 )
 
 func CompressLog(event rotate.Event) {
-	if !CONFIG.Log.Compress {
+	if !config.CONFIG.Log.Compress {
 		return
 	}
 

@@ -34,11 +34,12 @@ func SetupRouter(mode string) *gin.Engine {
 	deviceService := service.NewDeviceService(deviceRepo)
 	deviceHandler := handler.NewDeviceHandler(deviceService)
 
-	r.GET("/api/v1/captcha", authHandler.GetCaptcha)
+	r.GET("/api/captcha", authHandler.GetCaptcha)
 
-	api := r.Group("/api/v1")
+	api := r.Group("/api")
 	{
 		api.POST("/login", authHandler.Login)
+		api.POST("/register", authHandler.Register)
 
 		protected := api.Group("")
 		protected.Use(middleware.JWTAuth())

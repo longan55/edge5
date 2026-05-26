@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -14,6 +15,11 @@ type DatabaseConfig struct {
 func (d *DatabaseConfig) GetDSN() string {
 	if d.Type == "sqlite3" {
 		absPath, _ := filepath.Abs(d.SQLite3.Path)
+		// 检查目录是否存在，不存在则创建
+		dir := filepath.Dir(absPath)
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			os.MkdirAll(dir, 0755)
+		}
 		return absPath
 	}
 	return fmt.Sprintf(

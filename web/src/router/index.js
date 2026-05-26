@@ -8,6 +8,11 @@ const routes = [
     component: () => import('@/views/login/Login.vue')
   },
   {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@/views/register/Register.vue')
+  },
+  {
     path: '/',
     component: () => import('@/views/layout/Layout.vue'),
     redirect: '/dashboard',
@@ -47,7 +52,7 @@ const router = createRouter({
 
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('token')
-  const whiteList = ['/login']
+  const whiteList = ['/login', '/register']
 
   if (whiteList.includes(to.path)) {
     next()

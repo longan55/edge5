@@ -10,6 +10,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type UserService struct {
@@ -91,6 +92,46 @@ func (s *UserService) CreateUser(user *model.User, password string) error {
 	return s.userRepo.Create(user)
 }
 
+func (s *UserService) Register(username, password, nickname, email, phone string, roleID uint64, ip string) (*model.User, error) {
+	if username == "" {
+		return nil, errors.New("username empty")
+	}
+	if password == "" {
+		return nil, errors.New("password empty")
+	}
+	if roleID == 0 {
+		roleID = 1
+	}
+
+	// 唯一性校验（用户名）
+	_, err := s.userRepo.GetByUsername(username)
+	if err == nil {
+		return nil, ErrUserExists
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		// 数据库异常
+		s.logger.Warn("注册校验用户是否存在失败", zap.Error(err))
+		return nil, err
+	}
+
+	user := &model.User{
+		Username: username,
+		Password: "",
+		Nickname: nickname,
+		Email:    email,
+		Phone:    phone,
+		RoleID:   roleID,
+		Status:   1,
+		LoginIP:  ip,
+	}
+
+	if err := s.CreateUser(user, password); err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
 func (s *UserService) UpdateUser(user *model.User) error {
 	return s.userRepo.Update(user)
 }
@@ -126,6 +167,7 @@ var (
 	ErrUserNotFound    = errors.New("用户不存在")
 	ErrInvalidPassword = errors.New("密码错误")
 	ErrUserDisabled    = errors.New("用户已被禁用")
+	ErrUserExists      = errors.New("用户名已存在")
 )
 
 type DeviceService struct {

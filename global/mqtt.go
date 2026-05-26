@@ -2,10 +2,10 @@ package global
 
 import (
 	"errors"
-	"log"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"go.uber.org/zap"
 )
 
 type myMqttClient struct {
@@ -42,7 +42,12 @@ func (my *myMqttClient) Connect() error {
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
 		my.connected = false
 		// 只记录日志，不做其他操作
-		log.Printf("连接丢失: %v，SDK会自动重连", err)
+		Logger.Warn("MQTT连接丢失，SDK会自动重连", zap.Error(err))
+	})
+
+	opts.SetOnConnectHandler(func(client mqtt.Client) {
+		my.connected = true
+		Logger.Info("成功连接到MQTT Broker", zap.String("broker", CONFIG.MQTT.Broker))
 	})
 
 	my.client = mqtt.NewClient(opts)
@@ -52,7 +57,7 @@ func (my *myMqttClient) Connect() error {
 	if token.Wait() && token.Error() != nil {
 		// 注意：即使这里连接失败，AutoReconnect=true也会在后台重试
 		// 不需要手动循环重连
-		log.Printf("初始连接失败: %v，SDK会在后台重连", token.Error())
+		Logger.Warn("初始连接失败，SDK会在后台重连", zap.Error(token.Error()))
 	}
 
 	my.init = true
@@ -70,6 +75,10 @@ func (my *myMqttClient) Close() error {
 	my.init = false
 	my.connected = false
 	return nil
+}
+
+func (my *myMqttClient) IsConnected() bool {
+	return my.connected
 }
 
 func (my *myMqttClient) Publish(topic string, qos byte, payload []byte) error {

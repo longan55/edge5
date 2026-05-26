@@ -9,7 +9,6 @@ import (
 	"edge5/internal/pkg/connector"
 	"edge5/internal/router"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,14 +20,12 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("程序启动失败: %v", err)
+		global.Logger.Fatal("程序启动失败", zap.Error(err))
 	}
 }
 
 func run() error {
-	if err := config.InitConfig("config/config.yaml"); err != nil {
-		return fmt.Errorf("加载配置失败: %w", err)
-	}
+	config.InitConfig("config/config.yaml")
 
 	global.InitLogger()
 	global.Logger.Info("Edge5 网关框架启动中...")

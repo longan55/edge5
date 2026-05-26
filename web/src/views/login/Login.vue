@@ -31,6 +31,11 @@
             登录
           </el-button>
         </el-form-item>
+
+        <div class="footer-link">
+          没有账号？
+          <el-link type="primary" @click="goRegister">去注册</el-link>
+        </div>
       </el-form>
     </el-card>
   </div>
@@ -95,6 +100,10 @@ const handleLogin = async () => {
       loading.value = false
     }
   })
+}
+
+const goRegister = () => {
+  router.push('/register')
 }
 
 onMounted(() => {
