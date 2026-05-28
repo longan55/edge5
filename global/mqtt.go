@@ -18,6 +18,7 @@ func NewMqttClient() *myMqttClient {
 	return &myMqttClient{}
 }
 
+// TODO: 新增更多高级连接配置
 func (my *myMqttClient) Connect() error {
 	if my.init {
 		if my.connected {

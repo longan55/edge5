@@ -8,6 +8,7 @@ import (
 	"edge5/internal/utils/response"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 type MQTTHandler struct {
@@ -34,7 +35,6 @@ func (h *MQTTHandler) GetConfig(c *gin.Context) {
 			ClientID:  config.CONFIG.MQTT.ClientID,
 			KeepAlive: config.CONFIG.MQTT.KeepAlive,
 			QoS:       int8(config.CONFIG.MQTT.QoS),
-			GatewaySN: config.CONFIG.MQTT.GatewaySN,
 			Status:    0,
 		}
 	}
@@ -64,7 +64,6 @@ func (h *MQTTHandler) UpdateConfig(c *gin.Context) {
 	config.CONFIG.MQTT.ClientID = req.ClientID
 	config.CONFIG.MQTT.KeepAlive = req.KeepAlive
 	config.CONFIG.MQTT.QoS = byte(req.QoS)
-	config.CONFIG.MQTT.GatewaySN = req.GatewaySN
 
 	response.Success(c, nil)
 }
@@ -82,6 +81,7 @@ func (h *MQTTHandler) GetStatus(c *gin.Context) {
 func (h *MQTTHandler) applyConfigAndReconnect(c *gin.Context, connect bool) {
 	var req model.MQTTConfig
 	if err := c.ShouldBindJSON(&req); err != nil {
+		global.Logger.Error("解析MQTT连接参数失败", zap.Error(err))
 		response.Error(c, response.CodeInvalidParam, "参数错误")
 		return
 	}
@@ -94,7 +94,6 @@ func (h *MQTTHandler) applyConfigAndReconnect(c *gin.Context, connect bool) {
 	config.CONFIG.MQTT.ClientID = req.ClientID
 	config.CONFIG.MQTT.KeepAlive = req.KeepAlive
 	config.CONFIG.MQTT.QoS = byte(req.QoS)
-	config.CONFIG.MQTT.GatewaySN = req.GatewaySN
 
 	// 保存配置
 	if connect {
@@ -111,6 +110,7 @@ func (h *MQTTHandler) applyConfigAndReconnect(c *gin.Context, connect bool) {
 
 	if connect {
 		if err := global.MQTTClient.Connect(); err != nil {
+			global.Logger.Error("连接MQTT Broker失败", zap.Error(err))
 			response.Error(c, response.CodeError, "连接失败")
 			return
 		}

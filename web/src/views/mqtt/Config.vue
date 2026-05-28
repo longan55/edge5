@@ -7,12 +7,12 @@
 
       <el-form :model="form" label-width="120px">
         <el-form-item label="Broker 地址">
-          <el-input v-model="form.broker" placeholder="mqtt://127.0.0.1:1883" />
+          <el-input v-model="form.broker" placeholder="mqtt://x.x.x.x:1883" />
         </el-form-item>
 
-        <el-form-item label="端口">
+        <!-- <el-form-item label="端口">
           <el-input-number v-model="form.port" :min="1" :max="65535" />
-        </el-form-item>
+        </el-form-item> -->
 
         <el-form-item label="用户名">
           <el-input v-model="form.username" />
@@ -38,13 +38,13 @@
           </el-radio-group>
         </el-form-item>
 
-        <el-form-item label="网关序列号">
+        <!-- <el-form-item label="网关序列号">
           <el-input v-model="form.gateway_sn" />
-        </el-form-item>
+        </el-form-item> -->
 
         <el-form-item>
           <el-button type="primary" @click="handleSave">保存配置</el-button>
-          <el-button @click="handleTest">测试连接</el-button>
+          <!-- <el-button @click="handleTest">测试连接</el-button> -->
           <el-button :type="mqttConnected ? 'danger' : 'success'" @click="handleConnect">
             {{ mqttConnected ? '断开连接' : '连接' }}
           </el-button>
@@ -69,14 +69,12 @@ import request from '@/utils/request'
 import { ElMessage } from 'element-plus'
 
 const form = reactive({
-  broker: 'tcp://127.0.0.1:1883',
-  port: 1883,
+  broker: 'mqtt://x.x.x.x:1883',
   username: '',
   password: '',
-  client_id: 'edge5-gateway',
+  client_id: '',
   keep_alive: 60,
-  qos: 1,
-  gateway_sn: 'GWD001'
+  qos: 1
 })
 
 const mqttConnected = ref(false)
@@ -123,10 +121,10 @@ const handleTest = async () => {
 const handleConnect = async () => {
   try {
     if (mqttConnected.value) {
-      await request.post('/mqtt/disconnect')
+      await request.post('/mqtt/disconnect', form)
       ElMessage.success('已断开连接')
     } else {
-      await request.post('/mqtt/connect')
+      await request.post('/mqtt/connect', form)
       ElMessage.success('连接成功')
     }
     fetchStatus()

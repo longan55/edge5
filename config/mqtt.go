@@ -9,5 +9,4 @@ type MQTTConfig struct {
 	ClientID  string `mapstructure:"client_id"`
 	KeepAlive int    `mapstructure:"keep_alive"`
 	QoS       byte   `mapstructure:"qos"`
-	GatewaySN string `mapstructure:"gateway_sn"`
 }
