@@ -68,6 +68,11 @@ func SetupRouter(mode string) *gin.Engine {
 				mqttGroup.POST("/test", mqttHandler.TestConnection)
 			}
 
+			// device schema/template
+			deviceTemplateHandler := handler.NewDeviceTemplateHandler()
+			deviceTemplateGroup := protected.Group("/device")
+			deviceTemplateGroup.GET("/template", deviceTemplateHandler.GetTemplate)
+
 			deviceGroup := protected.Group("/device")
 			{
 				deviceGroup.GET("/list", deviceHandler.List)

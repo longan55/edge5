@@ -195,11 +195,53 @@ func (s *DeviceService) DeleteDevice(id uint64) error {
 }
 
 func (s *DeviceService) GetDevice(id uint64) (*model.Device, error) {
-	return s.deviceRepo.GetByID(id)
+	device, err := s.deviceRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	status, err := s.deviceStatusRepo.GetByDeviceID(device.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if status != nil {
+		device.Online = status.Online
+		device.LastHeartbeat = status.LastHeartbeat
+		device.Message = status.Message
+	} else {
+		device.Online = false
+		device.LastHeartbeat = time.Time{}
+		device.Message = ""
+	}
+
+	return device, nil
 }
 
 func (s *DeviceService) ListDevices(page, pageSize int, deviceType, brand string) ([]*model.Device, int64, error) {
-	return s.deviceRepo.List(page, pageSize, deviceType, brand)
+	devices, total, err := s.deviceRepo.List(page, pageSize, deviceType, brand)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// 填充在线状态（避免改表结构/复杂 SQL，先保证前端可用）
+	for _, d := range devices {
+		status, err := s.deviceStatusRepo.GetByDeviceID(d.ID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if status != nil {
+			d.Online = status.Online
+			d.LastHeartbeat = status.LastHeartbeat
+			d.Message = status.Message
+		} else {
+			d.Online = false
+			d.LastHeartbeat = time.Time{}
+			d.Message = ""
+		}
+	}
+
+	return devices, total, nil
 }
 
 func (s *DeviceService) StartDevice(id uint64) error {
@@ -208,10 +250,18 @@ func (s *DeviceService) StartDevice(id uint64) error {
 		return err
 	}
 	device.Status = 1
-	return s.deviceRepo.Update(device)
+	if err := s.deviceRepo.Update(device); err != nil {
+		return err
+	}
+
+	// 启动插件运行时（更新 device_status 在线/心跳/message）
+	return deviceRuntime.Start(device, s.deviceStatusRepo)
 }
 
 func (s *DeviceService) StopDevice(id uint64) error {
+	// 先停止插件运行时
+	_ = deviceRuntime.Stop(id)
+
 	device, err := s.deviceRepo.GetByID(id)
 	if err != nil {
 		return err

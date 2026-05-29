@@ -2,6 +2,7 @@ package repository
 
 import (
 	"edge5/internal/model"
+	"time"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -202,4 +203,28 @@ func (r *DeviceStatusRepository) GetByDeviceID(deviceID uint64) (*model.DeviceSt
 		return nil, err
 	}
 	return &status, nil
+}
+
+// UpsertByDeviceID 如果存在则更新，否则创建一条
+func (r *DeviceStatusRepository) UpsertByDeviceID(deviceID uint64, online bool, lastHeartbeat time.Time, message string) error {
+	// sqlite/postgres 都可用：先查，再 Save/Create
+	status, err := r.GetByDeviceID(deviceID)
+	if err != nil {
+		return err
+	}
+
+	if status == nil {
+		status = &model.DeviceStatus{
+			DeviceID:      deviceID,
+			Online:        online,
+			LastHeartbeat: lastHeartbeat,
+			Message:       message,
+		}
+		return r.db.Create(status).Error
+	}
+
+	status.Online = online
+	status.LastHeartbeat = lastHeartbeat
+	status.Message = message
+	return r.db.Save(status).Error
 }

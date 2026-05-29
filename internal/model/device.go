@@ -13,10 +13,15 @@ type Device struct {
 	Brand      string          `gorm:"size:32;not null" json:"brand"`
 	Protocol   string          `gorm:"size:32;not null" json:"protocol"`
 	Status     int8            `gorm:"default:1" json:"status"`
-	Config     json.RawMessage  `gorm:"type:jsonb" json:"config"`
+	Config     json.RawMessage `gorm:"type:jsonb" json:"config"`
 	PluginName string          `gorm:"size:64" json:"plugin_name"`
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
+
+	// runtime joins（用于列表展示，不建表）
+	Online        bool      `gorm:"-" json:"online"`
+	LastHeartbeat time.Time `gorm:"-" json:"last_heartbeat"`
+	Message       string    `gorm:"-" json:"message"`
 }
 
 func (Device) TableName() string {
@@ -49,8 +54,8 @@ func (DeviceStatus) TableName() string {
 }
 
 type DeviceData struct {
-	DeviceSn string                 `json:"device_sn"`
-	Type     string                 `json:"device_type"`
-	Data     map[string]interface{} `json:"data"`
-	Timestamp int64                 `json:"timestamp"`
+	DeviceSn  string                 `json:"device_sn"`
+	Type      string                 `json:"device_type"`
+	Data      map[string]interface{} `json:"data"`
+	Timestamp int64                  `json:"timestamp"`
 }
