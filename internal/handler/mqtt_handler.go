@@ -6,6 +6,7 @@ import (
 	"edge5/internal/model"
 	"edge5/internal/repository"
 	"edge5/internal/utils/response"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -35,8 +36,16 @@ func (h *MQTTHandler) GetConfig(c *gin.Context) {
 			ClientID:  config.CONFIG.MQTT.ClientID,
 			KeepAlive: config.CONFIG.MQTT.KeepAlive,
 			QoS:       int8(config.CONFIG.MQTT.QoS),
-			Status:    0,
+			On:        false,
+			GatewaySN: config.CONFIG.Gateway.SN,
+			CreatedAt: time.Time{},
+			UpdatedAt: time.Time{},
 		}
+	}
+
+	// 确保网关序列号总是有值（避免数据库 not null / uniqueIndex 冲突）
+	if cfg.GatewaySN == "" {
+		cfg.GatewaySN = config.CONFIG.Gateway.SN
 	}
 
 	response.Success(c, cfg)
@@ -49,21 +58,16 @@ func (h *MQTTHandler) UpdateConfig(c *gin.Context) {
 		return
 	}
 
-	// 只保存配置；连接状态由 connect/disconnect/status 维护
-	req.Status = 0
+	// 保存配置时：关闭 on/off（等用户手动“连接”或“重连/测试”再决定是否置为 true）
+	req.On = false
+	req.GatewaySN = config.CONFIG.Gateway.SN
+
+	h.syncToGlobalConfig(&req)
+
 	if err := h.mqttRepo.Update(&req); err != nil {
 		response.Error(c, response.CodeError, "更新MQTT配置失败")
 		return
 	}
-
-	// 同步到内存配置，便于后续 connect 使用
-	config.CONFIG.MQTT.Broker = req.Broker
-	config.CONFIG.MQTT.Port = req.Port
-	config.CONFIG.MQTT.Username = req.Username
-	config.CONFIG.MQTT.Password = req.Password
-	config.CONFIG.MQTT.ClientID = req.ClientID
-	config.CONFIG.MQTT.KeepAlive = req.KeepAlive
-	config.CONFIG.MQTT.QoS = byte(req.QoS)
 
 	response.Success(c, nil)
 }
@@ -78,15 +82,7 @@ func (h *MQTTHandler) GetStatus(c *gin.Context) {
 	})
 }
 
-func (h *MQTTHandler) applyConfigAndReconnect(c *gin.Context, connect bool) {
-	var req model.MQTTConfig
-	if err := c.ShouldBindJSON(&req); err != nil {
-		global.Logger.Error("解析MQTT连接参数失败", zap.Error(err))
-		response.Error(c, response.CodeInvalidParam, "参数错误")
-		return
-	}
-
-	// 同步到内存配置
+func (h *MQTTHandler) syncToGlobalConfig(req *model.MQTTConfig) {
 	config.CONFIG.MQTT.Broker = req.Broker
 	config.CONFIG.MQTT.Port = req.Port
 	config.CONFIG.MQTT.Username = req.Username
@@ -94,53 +90,102 @@ func (h *MQTTHandler) applyConfigAndReconnect(c *gin.Context, connect bool) {
 	config.CONFIG.MQTT.ClientID = req.ClientID
 	config.CONFIG.MQTT.KeepAlive = req.KeepAlive
 	config.CONFIG.MQTT.QoS = byte(req.QoS)
+}
 
-	// 保存配置
-	if connect {
-		req.Status = 1
-	} else {
-		req.Status = 0
+func (h *MQTTHandler) rebuildClient() {
+	if global.MQTTClient != nil {
+		_ = global.MQTTClient.Close()
 	}
-
-	_ = h.mqttRepo.Update(&req)
-
-	// 重建 client，确保能在断开后重新连接
-	_ = global.MQTTClient.Close()
 	global.MQTTClient = global.NewMqttClient()
+}
 
-	if connect {
-		if err := global.MQTTClient.Connect(); err != nil {
-			global.Logger.Error("连接MQTT Broker失败", zap.Error(err))
-			response.Error(c, response.CodeError, "连接失败")
-			return
+func (h *MQTTHandler) waitForConnected(timeout time.Duration, pollInterval time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if global.MQTTClient != nil && global.MQTTClient.IsConnected() {
+			return true
 		}
+		time.Sleep(pollInterval)
 	}
+	return global.MQTTClient != nil && global.MQTTClient.IsConnected()
 }
 
 func (h *MQTTHandler) Connect(c *gin.Context) {
-	h.applyConfigAndReconnect(c, true)
-	if c.IsAborted() {
+	var req model.MQTTConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		global.Logger.Error("解析MQTT连接参数失败", zap.Error(err))
+		response.Error(c, response.CodeInvalidParam, "参数错误")
 		return
 	}
+
+	req.GatewaySN = config.CONFIG.Gateway.SN
+
+	h.syncToGlobalConfig(&req)
+	h.rebuildClient()
+
+	if err := global.MQTTClient.Connect(); err != nil {
+		global.Logger.Error("连接MQTT Broker失败", zap.Error(err))
+		response.Error(c, response.CodeError, "连接失败")
+		return
+	}
+
+	// 只有在“真正连接成功”后才写 on=true 到数据库
+	if ok := h.waitForConnected(6*time.Second, 500*time.Millisecond); !ok {
+		response.Error(c, response.CodeError, "MQTT未在超时时间内连接成功")
+		return
+	}
+
+	req.On = true
+	if err := h.mqttRepo.Update(&req); err != nil {
+		response.Error(c, response.CodeError, "更新MQTT连接状态失败")
+		return
+	}
+
 	response.Success(c, nil)
 }
 
 func (h *MQTTHandler) Disconnect(c *gin.Context) {
-	// 断开时仍尝试按前端传入参数更新配置
-	h.applyConfigAndReconnect(c, false)
-	if c.IsAborted() {
+	var req model.MQTTConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, response.CodeInvalidParam, "参数错误")
 		return
 	}
+
+	req.GatewaySN = config.CONFIG.Gateway.SN
+	h.syncToGlobalConfig(&req)
+
+	// 断开时：置为 false
+	req.On = false
+
+	if global.MQTTClient != nil {
+		_ = global.MQTTClient.Close()
+	}
+	global.MQTTClient = global.NewMqttClient()
+
+	if err := h.mqttRepo.Update(&req); err != nil {
+		response.Error(c, response.CodeError, "更新MQTT断开状态失败")
+		return
+	}
+
 	response.Success(c, nil)
 }
 
 func (h *MQTTHandler) TestConnection(c *gin.Context) {
-	// 简单策略：尝试连接成功即可
-	h.applyConfigAndReconnect(c, true)
-	if c.IsAborted() {
+	var req model.MQTTConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, response.CodeInvalidParam, "参数错误")
 		return
 	}
+
+	// 测试不改数据库 on/off 状态
+	req.GatewaySN = config.CONFIG.Gateway.SN
+	h.syncToGlobalConfig(&req)
+
+	h.rebuildClient()
+	_ = global.MQTTClient.Connect()
+
+	connected := h.waitForConnected(6*time.Second, 500*time.Millisecond)
 	response.Success(c, gin.H{
-		"connected": global.MQTTClient.IsConnected(),
+		"connected": connected,
 	})
 }

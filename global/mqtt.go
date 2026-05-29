@@ -29,14 +29,25 @@ func (my *myMqttClient) Connect() error {
 	}
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(CONFIG.MQTT.Broker)
-	opts.SetClientID(CONFIG.Gateway.SN + "-edge5")
+	clientID := CONFIG.MQTT.ClientID
+	if clientID == "" {
+		clientID = CONFIG.Gateway.SN + "-edge5"
+	}
+	opts.SetClientID(clientID)
+
 	opts.SetUsername(CONFIG.MQTT.Username)
 	opts.SetPassword(CONFIG.MQTT.Password)
 	opts.SetCleanSession(false) // 持久会话，离线消息不丢失
 	opts.SetAutoReconnect(true)
 	opts.SetConnectRetry(true)
 	opts.SetConnectRetryInterval(5 * time.Second)
-	opts.SetKeepAlive(60 * time.Second)
+
+	keepAliveSec := CONFIG.MQTT.KeepAlive
+	if keepAliveSec <= 0 {
+		keepAliveSec = 60
+	}
+	opts.SetKeepAlive(time.Duration(keepAliveSec) * time.Second)
+
 	opts.SetPingTimeout(10 * time.Second)
 
 	// 可选：配置连接丢失时的行为

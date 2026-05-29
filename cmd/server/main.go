@@ -7,6 +7,7 @@ import (
 	"edge5/internal/model"
 	"edge5/internal/pkg/cache"
 	"edge5/internal/pkg/connector"
+	"edge5/internal/repository"
 	"edge5/internal/router"
 	"fmt"
 	"net/http"
@@ -48,10 +49,10 @@ func run() error {
 	initConnector()
 	initPlugin()
 
-	if config.CONFIG.MQTT.Enabled {
-		if err := initMQTT(); err != nil {
-			global.Logger.Warn("MQTT初始化失败，将稍后重试", zap.Error(err))
-		}
+	// 启动时：优先使用数据库第一条；若表为空则用配置文件
+	// 数据库存在时以 on/off 为准：on=true 才自动连接
+	if err := initMQTT(); err != nil {
+		global.Logger.Warn("MQTT初始化失败，将稍后重试", zap.Error(err))
 	}
 
 	r := router.SetupRouter(config.CONFIG.Server.Mode)
@@ -119,12 +120,104 @@ func initPlugin() {
 }
 
 func initMQTT() error {
+	// 启动时规范化：只保留第一条，并兼容老字段 status -> on
+	if err := normalizeMQTTConfigTable(); err != nil {
+		global.Logger.Warn("MQTT 配置表规范化失败，将继续按现有数据尝试连接", zap.Error(err))
+	}
+
+	mqttRepo := repository.NewMQTTConfigRepository(global.DB)
+	cfg, err := mqttRepo.Get()
+	if err != nil {
+		return err
+	}
+
+	// 空表：使用配置文件；连接成功后写 on=true
+	if cfg == nil {
+		global.MQTTClient = global.NewMqttClient()
+		if err := global.MQTTClient.Connect(); err != nil {
+			global.Logger.Warn("MQTT 初始连接失败，将依赖自动重连", zap.Error(err))
+			return nil
+		}
+
+		if waitMQTTConnected(6*time.Second, 500*time.Millisecond) {
+			_ = mqttRepo.Create(&model.MQTTConfig{
+				Broker:    config.CONFIG.MQTT.Broker,
+				Port:      config.CONFIG.MQTT.Port,
+				Username:  config.CONFIG.MQTT.Username,
+				Password:  config.CONFIG.MQTT.Password,
+				ClientID:  config.CONFIG.MQTT.ClientID,
+				KeepAlive: config.CONFIG.MQTT.KeepAlive,
+				QoS:       int8(config.CONFIG.MQTT.QoS),
+				On:        true,
+				GatewaySN: config.CONFIG.Gateway.SN,
+				CreatedAt: time.Time{},
+				UpdatedAt: time.Time{},
+			})
+		}
+		return nil
+	}
+
+	// 非空表：严格看 on/off
+	syncMQTTToGlobal(cfg)
+
+	if !cfg.On {
+		global.Logger.Info("MQTT on=false，不自动连接")
+		return nil
+	}
+
 	global.MQTTClient = global.NewMqttClient()
 	if err := global.MQTTClient.Connect(); err != nil {
-		// 允许启动时连接失败（SDK 会自动重连）；status 仍可正常返回 connected=false
 		global.Logger.Warn("MQTT 初始连接失败，将依赖自动重连", zap.Error(err))
 	}
+
+	// 连接成功后确保 on=true
+	if waitMQTTConnected(6*time.Second, 500*time.Millisecond) {
+		cfg.On = true
+		_ = mqttRepo.Update(cfg)
+	}
+
 	return nil
+}
+
+func syncMQTTToGlobal(cfg *model.MQTTConfig) {
+	config.CONFIG.MQTT.Broker = cfg.Broker
+	config.CONFIG.MQTT.Port = cfg.Port
+	config.CONFIG.MQTT.Username = cfg.Username
+	config.CONFIG.MQTT.Password = cfg.Password
+	config.CONFIG.MQTT.ClientID = cfg.ClientID
+	config.CONFIG.MQTT.KeepAlive = cfg.KeepAlive
+	config.CONFIG.MQTT.QoS = byte(cfg.QoS)
+}
+
+func waitMQTTConnected(timeout time.Duration, pollInterval time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if global.MQTTClient != nil && global.MQTTClient.IsConnected() {
+			return true
+		}
+		time.Sleep(pollInterval)
+	}
+	return global.MQTTClient != nil && global.MQTTClient.IsConnected()
+}
+
+// 兼容老表：如果表里还存在 status 字段，则 status=1 -> on=true
+// 并强制 mqtt_config 只保留第一条记录
+func normalizeMQTTConfigTable() error {
+	// 兼容老字段 status -> on
+	if global.DB.Migrator().HasColumn(&model.MQTTConfig{}, "status") {
+		_ = global.DB.Exec("UPDATE mqtt_config SET on = CASE WHEN status = 1 THEN 1 ELSE 0 END WHERE status IS NOT NULL").Error
+	}
+
+	mqttRepo := repository.NewMQTTConfigRepository(global.DB)
+	cfg, err := mqttRepo.Get()
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return nil
+	}
+	// repository.Update 会覆盖第一条并删除其它
+	return mqttRepo.Update(cfg)
 }
 
 func waitForSignal() {

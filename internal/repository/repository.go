@@ -68,24 +68,58 @@ func NewMQTTConfigRepository(db *gorm.DB) *MQTTConfigRepository {
 	return &MQTTConfigRepository{db: db}
 }
 
+// Get 只返回 mqtt_config 表的第一条（按 id 升序）
 func (r *MQTTConfigRepository) Get() (*model.MQTTConfig, error) {
-	var config model.MQTTConfig
-	err := r.db.First(&config).Error
+	var cfg model.MQTTConfig
+	err := r.db.Order("id asc").First(&cfg).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
 		return nil, err
 	}
-	return &config, nil
+	return &cfg, nil
 }
 
-func (r *MQTTConfigRepository) Create(config *model.MQTTConfig) error {
-	return r.db.Create(config).Error
+// Create 确保表内最终只保留一条记录
+func (r *MQTTConfigRepository) Create(cfg *model.MQTTConfig) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 先清空，避免产生多行
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Where("1 = 1").Delete(&model.MQTTConfig{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(cfg).Error
+	})
 }
 
-func (r *MQTTConfigRepository) Update(config *model.MQTTConfig) error {
-	return r.db.Save(config).Error
+// Update 确保 mqtt_config 只保留第一条记录：覆盖第一条并删除其余行
+func (r *MQTTConfigRepository) Update(cfg *model.MQTTConfig) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var first model.MQTTConfig
+		err := tx.Order("id asc").First(&first).Error
+		if err != nil {
+			if err == gorm.ErrRecordNotFound {
+				// 表为空：创建第一条
+				if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Where("1 = 1").Delete(&model.MQTTConfig{}).Error; err != nil {
+					return err
+				}
+				return tx.Create(cfg).Error
+			}
+			return err
+		}
+
+		// 覆盖第一条
+		cfg.ID = first.ID
+		if err := tx.Save(cfg).Error; err != nil {
+			return err
+		}
+
+		// 删除其它行
+		if err := tx.Where("id <> ?", first.ID).Delete(&model.MQTTConfig{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 type DeviceRepository struct {
