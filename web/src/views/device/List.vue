@@ -11,17 +11,19 @@
       <el-form inline @submit.prevent>
         <el-form-item label="设备类型">
           <el-select v-model="filters.deviceType" placeholder="全部" clearable>
-            <el-option label="PLC" value="plc" />
-            <el-option label="CNC" value="cnc" />
+            <el-option label="PLC" value="PLC" />
+            <el-option label="CNC" value="CNC" />
           </el-select>
         </el-form-item>
+
         <el-form-item label="品牌">
           <el-select v-model="filters.brand" placeholder="全部" clearable>
-            <el-option label="三菱" value="mitsubishi" />
-            <el-option label="西门子" value="siemens" />
-            <el-option label="Fanuc" value="fanuc" />
+            <el-option label="三菱" value="Mitsubishi" />
+            <el-option label="西门子" value="Siemens" />
+            <el-option label="Fanuc" value="Fanuc" />
           </el-select>
         </el-form-item>
+
         <el-form-item>
           <el-button @click="handleFilter">筛选</el-button>
           <el-button @click="handleReset">重置</el-button>
@@ -76,8 +78,8 @@
       />
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="760px" destroy-on-close>
-      <el-form :model="deviceForm" :rules="formRules" ref="formRef" label-width="100px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="860px" destroy-on-close>
+      <el-form :model="deviceForm" :rules="formRules" ref="formRef" label-width="120px">
         <el-form-item label="设备SN" prop="device_sn">
           <el-input v-model="deviceForm.device_sn" :disabled="!!deviceForm.id" />
         </el-form-item>
@@ -86,190 +88,99 @@
           <el-input v-model="deviceForm.device_name" />
         </el-form-item>
 
+        <el-divider />
+
         <el-form-item label="设备类型" prop="device_type">
-          <el-select v-model="deviceForm.device_type">
-            <el-option label="PLC" value="plc" />
-            <el-option label="CNC" value="cnc" />
+          <el-select
+            v-model="deviceForm.device_type"
+            placeholder="请选择"
+            @change="handleDeviceTypeChange"
+          >
+            <el-option v-for="dt in deviceOptions.deviceTypes" :key="dt.value" :label="dt.label" :value="dt.value" />
           </el-select>
         </el-form-item>
 
         <el-form-item label="品牌" prop="brand">
-          <el-select v-model="deviceForm.brand">
-            <el-option label="三菱" value="mitsubishi" />
-            <el-option label="西门子" value="siemens" />
-            <el-option label="Fanuc" value="fanuc" />
+          <el-select
+            v-model="deviceForm.brand"
+            placeholder="请选择"
+            :disabled="brandOptions.length === 0"
+            @change="handleBrandChange"
+          >
+            <el-option v-for="b in brandOptions" :key="b.value" :label="b.label" :value="b.value" />
           </el-select>
         </el-form-item>
 
         <el-form-item label="协议" prop="protocol">
-          <el-radio-group v-model="deviceForm.protocol">
-            <el-radio label="tcp">TCP</el-radio>
-            <el-radio label="serial">Serial</el-radio>
-          </el-radio-group>
+          <el-select
+            v-model="deviceForm.protocol"
+            placeholder="请选择"
+            :disabled="protocolOptions.length === 0"
+            @change="handleProtocolChange"
+          >
+            <el-option v-for="p in protocolOptions" :key="p.value" :label="p.label" :value="p.value" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item v-if="modelRelated" label="型号" prop="model">
+          <el-select v-model="deviceForm.model" placeholder="请选择" :disabled="modelOptions.length === 0">
+            <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
+          </el-select>
         </el-form-item>
 
         <el-divider />
 
-        <div v-if="templateLoading" style="padding: 12px 0; color: #999">
-          加载设备模板中...
-        </div>
+        <el-card shadow="never" style="margin-bottom: 12px">
+          <template #header>
+            <div>连接参数（设备侧）</div>
+          </template>
 
-        <div v-else-if="deviceForm.device_type === 'plc'">
-          <el-card shadow="never" style="margin-bottom: 12px">
-            <template #header>
-              <div>运行时配置（Runtime）</div>
-            </template>
-
-            <template v-if="deviceForm.protocol === 'tcp'">
-              <el-form-item label="IP地址">
-                <el-input v-model="deviceForm.config.runtime.ip" />
-              </el-form-item>
-              <el-form-item label="端口">
-                <el-input-number v-model="deviceForm.config.runtime.port" :min="1" :max="65535" />
-              </el-form-item>
-
-              <el-form-item label="插件gRPC Host">
-                <el-input v-model="deviceForm.config.runtime.extra.host" placeholder="127.0.0.1" />
-              </el-form-item>
-              <el-form-item label="插件gRPC Port">
-                <el-input-number v-model="deviceForm.config.runtime.extra.port" :min="1" :max="65535" />
-              </el-form-item>
-            </template>
-
-            <template v-else>
-              <el-form-item label="串口">
-                <el-input v-model="deviceForm.config.runtime.serial_port" placeholder="/dev/ttyS0" />
-              </el-form-item>
-              <el-form-item label="波特率">
-                <el-select v-model="deviceForm.config.runtime.baud_rate">
-                  <el-option :value="9600" label="9600" />
-                  <el-option :value="19200" label="19200" />
-                  <el-option :value="38400" label="38400" />
-                  <el-option :value="115200" label="115200" />
-                </el-select>
-              </el-form-item>
-
-              <el-form-item label="插件gRPC Host">
-                <el-input v-model="deviceForm.config.runtime.extra.host" placeholder="127.0.0.1" />
-              </el-form-item>
-              <el-form-item label="插件gRPC Port">
-                <el-input-number v-model="deviceForm.config.runtime.extra.port" :min="1" :max="65535" />
-              </el-form-item>
-            </template>
-          </el-card>
-
-          <el-card shadow="never">
-            <template #header>
-              <div>采集配置（Collection）</div>
-            </template>
-
-            <el-form-item label="采集间隔(ms)">
-              <el-input-number v-model="deviceForm.config.collection.intervalMs" :min="100" :step="100" />
-            </el-form-item>
-
-            <div style="margin-top: 12px; margin-bottom: 8px; display:flex; align-items:center; justify-content:space-between">
-              <div style="font-weight: 600">点位列表</div>
-              <el-button size="small" @click="addPlcPoint">添加点位</el-button>
-            </div>
-
-            <el-card
-              v-for="(p, idx) in deviceForm.config.collection.points"
-              :key="idx"
-              shadow="never"
-              style="margin-bottom: 10px; border: 1px solid #eee"
-            >
-              <div style="display:flex; gap: 12px; flex-wrap: wrap; align-items:center">
-                <el-form-item label="key" style="flex: 1; min-width: 180px">
-                  <el-input v-model="p.key" />
-                </el-form-item>
-                <el-form-item label="中文名" style="flex: 1; min-width: 180px">
-                  <el-input v-model="p.zhName" />
-                </el-form-item>
-                <el-form-item label="address" style="flex: 1; min-width: 180px">
-                  <el-input v-model="p.address" />
-                </el-form-item>
-                <el-form-item label="type" style="width: 190px">
-                  <el-select v-model="p.type">
-                    <el-option label="int16" value="int16" />
-                    <el-option label="uint16" value="uint16" />
-                    <el-option label="int32" value="int32" />
-                    <el-option label="uint32" value="uint32" />
-                    <el-option label="float" value="float" />
+          <el-alert v-if="!deviceForm.protocol" title="请选择协议后显示连接参数" type="info" show-icon />
+          <template v-else>
+            <el-row :gutter="12">
+              <el-col
+                v-for="opt in protocolConnParams"
+                :key="opt.name"
+                :span="12"
+                style="margin-bottom: 10px"
+              >
+                <el-form-item :label="opt.cName" :required="opt.required">
+                  <el-select
+                    v-if="opt.choices && opt.choices.length > 0"
+                    v-model="deviceForm.config.runtime[opt.name]"
+                    style="width: 100%"
+                  >
+                    <el-option
+                      v-for="c in opt.choices"
+                      :key="String(c)"
+                      :label="String(c)"
+                      :value="c"
+                    />
                   </el-select>
+
+                  <el-input
+                    v-else-if="opt.type === 'string'"
+                    v-model="deviceForm.config.runtime[opt.name]"
+                    :placeholder="typeof opt.default !== 'undefined' ? String(opt.default) : ''"
+                  />
+                  <el-input-number
+                    v-else-if="opt.type === 'int'"
+                    v-model="deviceForm.config.runtime[opt.name]"
+                    :min="1"
+                    :max="2147483647"
+                    :step="1"
+                  />
+                  <el-input-number
+                    v-else-if="opt.type === 'float'"
+                    v-model="deviceForm.config.runtime[opt.name]"
+                    :step="0.1"
+                  />
+                  <el-input v-else v-model="deviceForm.config.runtime[opt.name]" />
                 </el-form-item>
-                <el-form-item label="offset" style="width: 160px">
-                  <el-input-number v-model="p.offset" :step="1" />
-                </el-form-item>
-                <el-form-item label="scale" style="width: 160px">
-                  <el-input-number v-model="p.scale" :step="0.1" />
-                </el-form-item>
-                <el-form-item label="unit" style="width: 160px">
-                  <el-input v-model="p.unit" />
-                </el-form-item>
-
-                <el-button type="danger" size="small" @click="removePlcPoint(idx)" :disabled="deviceForm.config.collection.points.length <= 1">
-                  删除
-                </el-button>
-              </div>
-            </el-card>
-          </el-card>
-        </div>
-
-        <div v-else-if="deviceForm.device_type === 'cnc'">
-          <el-card shadow="never" style="margin-bottom: 12px">
-            <template #header>
-              <div>运行时配置（Runtime）</div>
-            </template>
-
-            <el-form-item label="扩展参数(JSON)">
-              <el-input
-                v-model="cncExtraText"
-                type="textarea"
-                :rows="4"
-                placeholder="{ }"
-                @blur="applyCncExtra"
-              />
-            </el-form-item>
-          </el-card>
-
-          <el-card shadow="never">
-            <template #header>
-              <div>采集配置（Collection）</div>
-            </template>
-
-            <el-form-item label="采集间隔(ms)">
-              <el-input-number v-model="deviceForm.config.collection.intervalMs" :min="100" :step="100" />
-            </el-form-item>
-
-            <div style="margin-top: 12px; margin-bottom: 8px; display:flex; align-items:center; justify-content:space-between">
-              <div style="font-weight: 600">启用字段列表</div>
-              <el-button size="small" @click="addCncField">添加字段</el-button>
-            </div>
-
-            <el-card
-              v-for="(f, idx) in deviceForm.config.collection.fields"
-              :key="idx"
-              shadow="never"
-              style="margin-bottom: 10px; border: 1px solid #eee"
-            >
-              <div style="display:flex; gap: 12px; flex-wrap: wrap; align-items:center">
-                <el-form-item label="key" style="width: 220px">
-                  <el-select v-model="f.key">
-                    <el-option label="spindleSpeed" value="spindleSpeed" />
-                    <el-option label="feedRate" value="feedRate" />
-                    <el-option label="alarmCode" value="alarmCode" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="中文名" style="flex: 1; min-width: 220px">
-                  <el-input v-model="f.zhName" />
-                </el-form-item>
-                <el-button type="danger" size="small" @click="removeCncField(idx)" :disabled="deviceForm.config.collection.fields.length <= 1">
-                  删除
-                </el-button>
-              </div>
-            </el-card>
-          </el-card>
-        </div>
+              </el-col>
+            </el-row>
+          </template>
+        </el-card>
 
         <template #footer>
           <el-button @click="dialogVisible = false">取消</el-button>
@@ -281,7 +192,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import request from '@/utils/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -290,13 +201,12 @@ const deviceList = ref([])
 const dialogVisible = ref(false)
 const formRef = ref(null)
 
-const templateLoading = ref(false)
-const templateData = reactive({
-  schema: null,
-  defaultConfig: null
+const deviceOptions = reactive({
+  deviceTypes: [],
+  protocolOptions: {}
 })
 
-const cncExtraText = ref('{}')
+const optionsLoading = ref(false)
 
 const filters = reactive({
   deviceType: '',
@@ -309,16 +219,24 @@ const pagination = reactive({
   total: 0
 })
 
+const DEFAULT_PLUGIN_HOST = '127.0.0.1'
+const DEFAULT_PLUGIN_PORT = 50051
+
 const deviceForm = reactive({
   id: null,
   device_sn: '',
   device_name: '',
-  device_type: 'plc',
-  brand: 'mitsubishi',
-  protocol: 'tcp',
+  device_type: '',
+  brand: '',
+  protocol: '',
+  model: '',
   config: {
-    runtime: {},
-    collection: {}
+    runtime: {
+      extra: {
+        host: DEFAULT_PLUGIN_HOST,
+        port: DEFAULT_PLUGIN_PORT
+      }
+    }
   }
 })
 
@@ -334,87 +252,295 @@ const formRules = {
 
 const deepClone = obj => JSON.parse(JSON.stringify(obj || {}))
 
-const mergeWithTemplate = (existingConfig) => {
-  const base = deepClone(templateData.defaultConfig || {})
-  if (!existingConfig || typeof existingConfig !== 'object') {
-    deviceForm.config = base
-    return
-  }
+const selectedDeviceType = computed(() => {
+  if (!deviceForm.device_type) return null
+  return deviceOptions.deviceTypes.find(d => d.value === deviceForm.device_type) || null
+})
 
-  // new config format: { runtime: {...}, collection: {...} }
-  if (existingConfig.runtime || existingConfig.collection) {
-    base.runtime = { ...(base.runtime || {}), ...(existingConfig.runtime || {}) }
-    base.collection = { ...(base.collection || {}), ...(existingConfig.collection || {}) }
-    deviceForm.config = base
-    return
-  }
+const brandOptions = computed(() => selectedDeviceType.value?.brands || [])
 
-  // old config format: directly runtime fields (ip/port or serial_port/baud_rate)
-  base.runtime = { ...(base.runtime || {}), ...existingConfig }
-  deviceForm.config = base
+const selectedBrand = computed(() => {
+  if (!deviceForm.brand) return null
+  return brandOptions.value.find(b => b.value === deviceForm.brand) || null
+})
+
+const protocolOptions = computed(() => selectedBrand.value?.protocols || [])
+
+const modelRelated = computed(() => !!protocolOptions.value?.find(p => p.value === deviceForm.protocol)?.modelRelated)
+
+const selectedProtocol = computed(() => {
+  if (!deviceForm.protocol) return null
+  return protocolOptions.value.find(p => p.value === deviceForm.protocol) || null
+})
+
+const modelOptions = computed(() => selectedProtocol.value?.models || [])
+
+const protocolConnParams = computed(() => {
+  if (!deviceForm.protocol) return []
+  const group = deviceOptions.protocolOptions?.[deviceForm.protocol]
+  return group?.options || []
+})
+
+const normalizeDeviceType = v => {
+  if (!v) return ''
+  const s = String(v).toLowerCase()
+  if (s === 'plc') return 'PLC'
+  if (s === 'cnc') return 'CNC'
+  if (v === 'PLC' || v === 'CNC') return v
+  return v
 }
 
-const fetchTemplate = async () => {
-  templateLoading.value = true
-  try {
-    const res = await request.get('/device/template', {
-      params: {
-        device_type: deviceForm.device_type,
-        protocol: deviceForm.protocol
-      }
-    })
-    templateData.schema = res.data?.schema || null
-    templateData.defaultConfig = res.data?.default_config || {}
+const normalizeBrand = v => {
+  if (!v) return ''
+  const s = String(v).toLowerCase()
+  if (s === 'mitsubishi') return 'Mitsubishi'
+  if (s === 'siemens') return 'Siemens'
+  if (s === 'fanuc') return 'Fanuc'
+  return v
+}
 
-    mergeWithTemplate(deviceForm.config)
-    // apply cnc extra text for ui
-    if (deviceForm.device_type === 'cnc') {
-      cncExtraText.value = JSON.stringify(deviceForm.config?.runtime?.extra || {}, null, 2)
+const normalizeProtocol = (v, deviceType) => {
+  if (!v) return ''
+  const s = String(v)
+  const lower = s.toLowerCase()
+  if (lower === 'tcp') {
+    if (deviceType === 'PLC') return 'MC-3E'
+    if (deviceType === 'CNC') return 'Melsec-CNC'
+  }
+  if (lower === 'serial') {
+    if (deviceType === 'PLC') return 'FX-Serial'
+  }
+  return s
+}
+
+const ensureRuntimeShape = () => {
+  if (!deviceForm.config || typeof deviceForm.config !== 'object') {
+    deviceForm.config = { runtime: {} }
+  }
+  if (!deviceForm.config.runtime || typeof deviceForm.config.runtime !== 'object') {
+    deviceForm.config.runtime = {}
+  }
+  if (!deviceForm.config.runtime.extra || typeof deviceForm.config.runtime.extra !== 'object') {
+    deviceForm.config.runtime.extra = { host: DEFAULT_PLUGIN_HOST, port: DEFAULT_PLUGIN_PORT }
+  }
+  if (!deviceForm.config.runtime.extra.host) deviceForm.config.runtime.extra.host = DEFAULT_PLUGIN_HOST
+  if (!deviceForm.config.runtime.extra.port) deviceForm.config.runtime.extra.port = DEFAULT_PLUGIN_PORT
+}
+
+const clearProtocolRuntimeParams = () => {
+  if (!deviceForm.config?.runtime) return
+  const allowed = new Set(protocolConnParams.value.map(p => p.name))
+  allowed.add('extra')
+  allowed.add('model')
+
+  for (const k of Object.keys(deviceForm.config.runtime)) {
+    if (!allowed.has(k)) delete deviceForm.config.runtime[k]
+  }
+}
+
+const applyProtocolDefaults = () => {
+  ensureRuntimeShape()
+  const params = protocolConnParams.value
+
+  const allowed = new Set(params.map(p => p.name))
+  allowed.add('extra')
+  allowed.add('model')
+
+  for (const k of Object.keys(deviceForm.config.runtime)) {
+    if (!allowed.has(k)) delete deviceForm.config.runtime[k]
+  }
+
+  for (const opt of params) {
+    const curr = deviceForm.config.runtime[opt.name]
+    const hasValue = curr !== undefined && curr !== null && curr !== ''
+    if (!hasValue && typeof opt.default !== 'undefined') {
+      deviceForm.config.runtime[opt.name] = deepClone(opt.default)
+    } else if (!hasValue) {
+      deviceForm.config.runtime[opt.name] = opt.type === 'int' || opt.type === 'float' ? 0 : ''
     }
-  } catch (e) {
-    console.error('加载模板失败:', e)
-    ElMessage.error('加载设备模板失败')
-  } finally {
-    templateLoading.value = false
+  }
+
+  if (modelRelated.value) {
+    if (!deviceForm.config.runtime.model && deviceForm.model) {
+      deviceForm.config.runtime.model = deviceForm.model
+    }
+    if (!deviceForm.config.runtime.model && modelOptions.value.length > 0) {
+      deviceForm.config.runtime.model = modelOptions.value[0]
+      deviceForm.model = modelOptions.value[0]
+    }
+  } else {
+    if (deviceForm.config.runtime.model) delete deviceForm.config.runtime.model
   }
 }
 
-const addPlcPoint = () => {
-  deviceForm.config.collection.points.push({
-    key: '',
-    zhName: '',
-    address: '',
-    type: 'int16',
-    offset: 0,
-    scale: 1,
-    unit: ''
-  })
+const migrateExistingConfigForProtocol = () => {
+  ensureRuntimeShape()
+
+  // 兼容旧 PLC Serial 字段名：serial_port/baud_rate -> serialPort/baudRate
+  if (deviceForm.device_type === 'PLC' && deviceForm.protocol === 'FX-Serial') {
+    const runtime = deviceForm.config.runtime
+    if (runtime.serial_port !== undefined && runtime.serialPort === undefined) runtime.serialPort = runtime.serial_port
+    if (runtime.baud_rate !== undefined && runtime.baudRate === undefined) runtime.baudRate = runtime.baud_rate
+  }
+
+  const params = protocolConnParams.value
+  for (const opt of params) {
+    const rootVal = deviceForm.config.runtime[opt.name]
+    if (
+      rootVal === undefined &&
+      deviceForm.config.runtime.extra &&
+      deviceForm.config.runtime.extra[opt.name] !== undefined
+    ) {
+      deviceForm.config.runtime[opt.name] = deviceForm.config.runtime.extra[opt.name]
+    }
+  }
+
+  applyProtocolDefaults()
 }
 
-const removePlcPoint = (idx) => {
-  if (deviceForm.config.collection.points.length <= 1) return
-  deviceForm.config.collection.points.splice(idx, 1)
+const handleDeviceTypeChange = () => {
+  deviceForm.brand = ''
+  deviceForm.protocol = ''
+  deviceForm.model = ''
+  ensureRuntimeShape()
+  clearProtocolRuntimeParams()
 }
 
-const addCncField = () => {
-  deviceForm.config.collection.fields.push({
-    key: 'spindleSpeed',
-    zhName: ''
-  })
+const handleBrandChange = () => {
+  deviceForm.protocol = ''
+  deviceForm.model = ''
+  ensureRuntimeShape()
+  clearProtocolRuntimeParams()
 }
 
-const removeCncField = (idx) => {
-  if (deviceForm.config.collection.fields.length <= 1) return
-  deviceForm.config.collection.fields.splice(idx, 1)
+const handleProtocolChange = () => {
+  deviceForm.model = ''
+  ensureRuntimeShape()
+  applyProtocolDefaults()
+
+  if (modelRelated.value && modelOptions.value.length > 0) {
+    deviceForm.model = modelOptions.value[0]
+    deviceForm.config.runtime.model = deviceForm.model
+  }
 }
 
-const applyCncExtra = () => {
-  if (deviceForm.device_type !== 'cnc') return
+const fetchDeviceOptions = async () => {
+  optionsLoading.value = true
   try {
-    const v = JSON.parse(cncExtraText.value || '{}')
-    deviceForm.config.runtime.extra = v
+    const res = await request.get('/device/options')
+    deviceOptions.deviceTypes = res.data?.deviceTypes || []
+    deviceOptions.protocolOptions = res.data?.protocolOptions || {}
+  } catch (e) {
+    console.error('获取设备选项失败:', e)
+    ElMessage.error('获取设备选项失败')
+  } finally {
+    optionsLoading.value = false
+  }
+}
+
+const initFormForAdd = () => {
+  deviceForm.id = null
+  deviceForm.device_sn = ''
+  deviceForm.device_name = ''
+  deviceForm.device_type = ''
+  deviceForm.brand = ''
+  deviceForm.protocol = ''
+  deviceForm.model = ''
+  deviceForm.config = {
+    runtime: {
+      extra: {
+        host: DEFAULT_PLUGIN_HOST,
+        port: DEFAULT_PLUGIN_PORT
+      }
+    }
+  }
+}
+
+const handleAdd = async () => {
+  initFormForAdd()
+  if (!deviceOptions.deviceTypes.length) {
+    await fetchDeviceOptions()
+  }
+  dialogVisible.value = true
+
+  if (deviceOptions.deviceTypes.length > 0) {
+    deviceForm.device_type = deviceOptions.deviceTypes[0].value
+    const firstBrand = deviceOptions.deviceTypes[0].brands?.[0]
+    if (firstBrand) {
+      deviceForm.brand = firstBrand.value
+      const firstProtocol = firstBrand.protocols?.[0]
+      if (firstProtocol) {
+        deviceForm.protocol = firstProtocol.value
+        handleProtocolChange()
+      }
+    }
+  }
+}
+
+const handleEdit = async row => {
+  deviceForm.id = row.id
+  deviceForm.device_sn = row.device_sn
+  deviceForm.device_name = row.device_name
+
+  deviceForm.device_type = normalizeDeviceType(row.device_type)
+  deviceForm.brand = normalizeBrand(row.brand)
+  deviceForm.protocol = normalizeProtocol(row.protocol, deviceForm.device_type)
+  deviceForm.model = ''
+
+  try {
+    const parsed = JSON.parse(row.config || '{}')
+    deviceForm.config = parsed && typeof parsed === 'object' ? parsed : { runtime: {} }
   } catch {
-    ElMessage.error('扩展参数 JSON 格式错误')
+    deviceForm.config = { runtime: {} }
+  }
+
+  ensureRuntimeShape()
+
+  if (!deviceOptions.deviceTypes.length) {
+    await fetchDeviceOptions()
+  }
+
+  applyProtocolDefaults()
+  migrateExistingConfigForProtocol()
+
+  if (modelRelated.value && modelOptions.value.length > 0) {
+    deviceForm.model = deviceForm.config.runtime.model || modelOptions.value[0]
+    deviceForm.config.runtime.model = deviceForm.model
+  }
+
+  dialogVisible.value = true
+}
+
+const handleSubmit = async () => {
+  await formRef.value.validate()
+
+  ensureRuntimeShape()
+
+  if (modelRelated.value) {
+    deviceForm.config.runtime.model = deviceForm.model || deviceForm.config.runtime.model
+  }
+
+  const data = {
+    device_sn: deviceForm.device_sn,
+    device_name: deviceForm.device_name,
+    device_type: deviceForm.device_type,
+    brand: deviceForm.brand,
+    protocol: deviceForm.protocol,
+    config: JSON.stringify(deviceForm.config)
+  }
+
+  try {
+    if (deviceForm.id) {
+      await request.put(`/device/${deviceForm.id}`, data)
+      ElMessage.success('更新成功')
+    } else {
+      await request.post('/device', data)
+      ElMessage.success('创建成功')
+    }
+    dialogVisible.value = false
+    fetchDevices()
+  } catch (error) {
+    console.error('保存失败:', error)
   }
 }
 
@@ -449,104 +575,11 @@ const handleReset = () => {
   handleFilter()
 }
 
-const initFormForAdd = () => {
-  deviceForm.id = null
-  deviceForm.device_sn = ''
-  deviceForm.device_name = ''
-  deviceForm.device_type = 'plc'
-  deviceForm.brand = 'mitsubishi'
-  deviceForm.protocol = 'tcp'
-  deviceForm.config = {
-    runtime: {
-      extra: {
-        host: '',
-        port: 50051
-      }
-    },
-    collection: {}
-  }
+const handleRowClick = row => {
+  // placeholder
 }
 
-const handleAdd = () => {
-  initFormForAdd()
-  dialogVisible.value = true
-  // wait dialog open then fetch
-  fetchTemplate()
-}
-
-const handleEdit = (row) => {
-  deviceForm.id = row.id
-  deviceForm.device_sn = row.device_sn
-  deviceForm.device_name = row.device_name
-  deviceForm.device_type = row.device_type
-  deviceForm.brand = row.brand
-  deviceForm.protocol = row.protocol
-
-  try {
-    const parsed = JSON.parse(row.config || '{}')
-    deviceForm.config = parsed && typeof parsed === 'object' ? parsed : { runtime: {}, collection: {} }
-  } catch {
-    deviceForm.config = { runtime: {}, collection: {} }
-  }
-
-  // ensure runtime.extra exists for v-model binding
-  if (!deviceForm.config.runtime || typeof deviceForm.config.runtime !== 'object') {
-    deviceForm.config.runtime = {}
-  }
-  if (!deviceForm.config.runtime.extra || typeof deviceForm.config.runtime.extra !== 'object') {
-    deviceForm.config.runtime.extra = { host: '', port: 50051 }
-  }
-
-  dialogVisible.value = true
-  fetchTemplate()
-}
-
-watch(
-  () => [deviceForm.device_type, deviceForm.protocol, dialogVisible.value],
-  async ([type, proto, open]) => {
-    if (!open) return
-    // keep current config by mergeWithTemplate() using template defaults
-    await fetchTemplate()
-    if (type === 'cnc') {
-      cncExtraText.value = JSON.stringify(deviceForm.config?.runtime?.extra || {}, null, 2)
-    }
-  }
-)
-
-const handleSubmit = async () => {
-  await formRef.value.validate()
-
-  // ensure required shape
-  if (!deviceForm.config || typeof deviceForm.config !== 'object') {
-    ElMessage.error('配置格式错误')
-    return
-  }
-
-  const data = {
-    device_sn: deviceForm.device_sn,
-    device_name: deviceForm.device_name,
-    device_type: deviceForm.device_type,
-    brand: deviceForm.brand,
-    protocol: deviceForm.protocol,
-    config: JSON.stringify(deviceForm.config)
-  }
-
-  try {
-    if (deviceForm.id) {
-      await request.put(`/device/${deviceForm.id}`, data)
-      ElMessage.success('更新成功')
-    } else {
-      await request.post('/device', data)
-      ElMessage.success('创建成功')
-    }
-    dialogVisible.value = false
-    fetchDevices()
-  } catch (error) {
-    console.error('保存失败:', error)
-  }
-}
-
-const handleStart = async (row) => {
+const handleStart = async row => {
   const action = row.status === 1 ? 'stop' : 'start'
   try {
     await request.post(`/device/${row.id}/${action}`)
@@ -557,7 +590,7 @@ const handleStart = async (row) => {
   }
 }
 
-const handleDelete = async (row) => {
+const handleDelete = async row => {
   await ElMessageBox.confirm('确定要删除该设备吗？', '提示', { type: 'warning' })
   try {
     await request.delete(`/device/${row.id}`)
@@ -568,12 +601,16 @@ const handleDelete = async (row) => {
   }
 }
 
-const handleRowClick = (row) => {
-  // placeholder
-}
+watch(
+  () => deviceForm.model,
+  val => {
+    if (modelRelated.value) deviceForm.config.runtime.model = val
+  }
+)
 
 onMounted(() => {
   fetchDevices()
+  fetchDeviceOptions()
 })
 </script>
 
@@ -582,5 +619,11 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.section-title {
+  font-weight: 700;
+  margin: 12px 0 8px;
+  font-size: 16px;
 }
 </style>

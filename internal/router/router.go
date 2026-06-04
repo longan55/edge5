@@ -73,6 +73,11 @@ func SetupRouter(mode string) *gin.Engine {
 			deviceTemplateGroup := protected.Group("/device")
 			deviceTemplateGroup.GET("/template", deviceTemplateHandler.GetTemplate)
 
+			// device add options (deviceTypes + protocolOptions)
+			deviceOptionsHandler := handler.NewDeviceOptionsHandler()
+			deviceOptionsGroup := protected.Group("/device")
+			deviceOptionsGroup.GET("/options", deviceOptionsHandler.GetDeviceOptions)
+
 			deviceGroup := protected.Group("/device")
 			{
 				deviceGroup.GET("/list", deviceHandler.List)
