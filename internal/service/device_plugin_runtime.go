@@ -172,7 +172,6 @@ func (r *devicePluginRuntime) Stop(deviceID uint64) error {
 
 // 解析 device.Config 获取插件拨号所需 host/port、params、采集 interval
 func parseDevicePluginRuntime(device *model.Device) (host string, port int, params map[string]string, intervalMs int, err error) {
-	// defaults
 	params = make(map[string]string)
 	intervalMs = 1000
 
@@ -190,27 +189,71 @@ func parseDevicePluginRuntime(device *model.Device) (host string, port int, para
 		return "", 0, nil, 0, errors.New("device.config not object")
 	}
 
-	runtimeObj, _ := root["runtime"].(map[string]any)
-	collectionObj, _ := root["collection"].(map[string]any)
-
-	// intervalMs
-	if v, ok := collectionObj["intervalMs"]; ok {
-		switch x := v.(type) {
+	// New flat format:
+	// {"pluginHost":"127.0.0.1","pluginPort":50051,"ip":"192.168.1.100","port":6000,"pcNum":"0xFF","model":"Q03"}
+	//
+	// Backward-compat: if root["runtime"] exists as an object, treat it as the old format.
+	runtimeObj, isOld := root["runtime"].(map[string]any)
+	if isOld {
+		// old format: runtime.extra.host/port + runtime.* (params)
+		extraObj, _ := runtimeObj["extra"].(map[string]any)
+		host, _ = extraObj["host"].(string)
+		switch p := extraObj["port"].(type) {
 		case float64:
-			intervalMs = int(x)
+			port = int(p)
 		case int:
-			intervalMs = x
+			port = p
 		case string:
-			if n, e := strconv.Atoi(x); e == nil {
-				intervalMs = n
+			if n, e := strconv.Atoi(p); e == nil {
+				port = n
 			}
 		}
+		if host != "" && port != 0 {
+			// migrate host/port to root level
+			root["pluginHost"] = host
+			root["pluginPort"] = port
+		}
+		for k, v := range runtimeObj {
+			if k == "extra" {
+				continue
+			}
+			switch vv := v.(type) {
+			case string:
+				params[k] = vv
+			case float64:
+				if vv == float64(int64(vv)) {
+					params[k] = strconv.FormatInt(int64(vv), 10)
+				} else {
+					params[k] = strconv.FormatFloat(vv, 'f', -1, 64)
+				}
+			case int:
+				params[k] = strconv.Itoa(vv)
+			case bool:
+				params[k] = strconv.FormatBool(vv)
+			}
+		}
+
+		// interval from old collection
+		if collObj, ok := root["collection"].(map[string]any); ok {
+			if v, ok := collObj["intervalMs"]; ok {
+				switch x := v.(type) {
+				case float64:
+					intervalMs = int(x)
+				case int:
+					intervalMs = x
+				case string:
+					if n, e := strconv.Atoi(x); e == nil {
+						intervalMs = n
+					}
+				}
+			}
+		}
+		return host, port, params, intervalMs, nil
 	}
 
-	// runtime.extra.host/port
-	extraObj, _ := runtimeObj["extra"].(map[string]any)
-	host, _ = extraObj["host"].(string)
-	switch p := extraObj["port"].(type) {
+	// New flat format
+	host, _ = root["pluginHost"].(string)
+	switch p := root["pluginPort"].(type) {
 	case float64:
 		port = int(p)
 	case int:
@@ -222,19 +265,19 @@ func parseDevicePluginRuntime(device *model.Device) (host string, port int, para
 	}
 
 	if host == "" || port == 0 {
-		return "", 0, nil, 0, errors.New("runtime.extra.host/port missing in device.config")
+		return "", 0, nil, 0, errors.New("device.config missing pluginHost/pluginPort")
 	}
 
-	// runtime params: pass ip/port/serial_port/baud_rate to plugin
-	for k, v := range runtimeObj {
-		if k == "extra" {
+	// All other fields (except pluginHost/pluginPort) are connection params sent to the plugin
+	skipKeys := map[string]bool{"pluginHost": true, "pluginPort": true}
+	for k, v := range root {
+		if skipKeys[k] {
 			continue
 		}
 		switch vv := v.(type) {
 		case string:
 			params[k] = vv
 		case float64:
-			// avoid "1.0"
 			if vv == float64(int64(vv)) {
 				params[k] = strconv.FormatInt(int64(vv), 10)
 			} else {
@@ -244,14 +287,7 @@ func parseDevicePluginRuntime(device *model.Device) (host string, port int, para
 			params[k] = strconv.Itoa(vv)
 		case bool:
 			params[k] = strconv.FormatBool(vv)
-		default:
-			// ignore complex objects
 		}
-	}
-
-	if len(params) == 0 {
-		// allow empty params, but still okay
-		// params = map[string]string{}
 	}
 
 	return host, port, params, intervalMs, nil

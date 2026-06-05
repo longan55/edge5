@@ -11,16 +11,23 @@
       <el-form inline @submit.prevent>
         <el-form-item label="设备类型">
           <el-select v-model="filters.deviceType" placeholder="全部" clearable>
-            <el-option label="PLC" value="PLC" />
-            <el-option label="CNC" value="CNC" />
+            <el-option
+              v-for="dt in deviceOptions.deviceTypes"
+              :key="dt.value"
+              :label="dt.label"
+              :value="dt.value"
+            />
           </el-select>
         </el-form-item>
 
         <el-form-item label="品牌">
           <el-select v-model="filters.brand" placeholder="全部" clearable>
-            <el-option label="三菱" value="Mitsubishi" />
-            <el-option label="西门子" value="Siemens" />
-            <el-option label="Fanuc" value="Fanuc" />
+            <el-option
+              v-for="b in allBrandOptions"
+              :key="b.value"
+              :label="b.label"
+              :value="b.value"
+            />
           </el-select>
         </el-form-item>
 
@@ -147,7 +154,7 @@
                 <el-form-item :label="opt.cName" :required="opt.required">
                   <el-select
                     v-if="opt.choices && opt.choices.length > 0"
-                    v-model="deviceForm.config.runtime[opt.name]"
+                    v-model="deviceForm.config[opt.name]"
                     style="width: 100%"
                   >
                     <el-option
@@ -160,39 +167,39 @@
 
                   <el-input
                     v-else-if="opt.type === 'string'"
-                    v-model="deviceForm.config.runtime[opt.name]"
+                    v-model="deviceForm.config[opt.name]"
                     :placeholder="typeof opt.default !== 'undefined' ? String(opt.default) : ''"
                   />
                   <el-input-number
                     v-else-if="opt.type === 'int'"
-                    v-model="deviceForm.config.runtime[opt.name]"
+                    v-model="deviceForm.config[opt.name]"
                     :min="1"
                     :max="2147483647"
                     :step="1"
                   />
                   <el-input-number
                     v-else-if="opt.type === 'float'"
-                    v-model="deviceForm.config.runtime[opt.name]"
+                    v-model="deviceForm.config[opt.name]"
                     :step="0.1"
                   />
-                  <el-input v-else v-model="deviceForm.config.runtime[opt.name]" />
+                  <el-input v-else v-model="deviceForm.config[opt.name]" />
                 </el-form-item>
               </el-col>
             </el-row>
           </template>
         </el-card>
-
-        <template #footer>
-          <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="handleSubmit">确定</el-button>
-        </template>
       </el-form>
+
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmit">确定</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import request from '@/utils/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -231,12 +238,8 @@ const deviceForm = reactive({
   protocol: '',
   model: '',
   config: {
-    runtime: {
-      extra: {
-        host: DEFAULT_PLUGIN_HOST,
-        port: DEFAULT_PLUGIN_PORT
-      }
-    }
+    pluginHost: DEFAULT_PLUGIN_HOST,
+    pluginPort: DEFAULT_PLUGIN_PORT
   }
 })
 
@@ -259,26 +262,36 @@ const selectedDeviceType = computed(() => {
 
 const brandOptions = computed(() => selectedDeviceType.value?.brands || [])
 
-const selectedBrand = computed(() => {
-  if (!deviceForm.brand) return null
-  return brandOptions.value.find(b => b.value === deviceForm.brand) || null
+const protocolOptions = computed(() => {
+  if (!deviceForm.brand) return []
+  const brand = brandOptions.value.find(b => b.value === deviceForm.brand)
+  return brand?.protocols || []
 })
 
-const protocolOptions = computed(() => selectedBrand.value?.protocols || [])
-
-const modelRelated = computed(() => !!protocolOptions.value?.find(p => p.value === deviceForm.protocol)?.modelRelated)
-
-const selectedProtocol = computed(() => {
-  if (!deviceForm.protocol) return null
-  return protocolOptions.value.find(p => p.value === deviceForm.protocol) || null
+const modelRelated = computed(() => {
+  const p = protocolOptions.value.find(p => p.value === deviceForm.protocol)
+  return !!p?.modelRelated
 })
 
-const modelOptions = computed(() => selectedProtocol.value?.models || [])
+const modelOptions = computed(() => {
+  const p = protocolOptions.value.find(p => p.value === deviceForm.protocol)
+  return p?.models || []
+})
 
 const protocolConnParams = computed(() => {
   if (!deviceForm.protocol) return []
   const group = deviceOptions.protocolOptions?.[deviceForm.protocol]
   return group?.options || []
+})
+
+const allBrandOptions = computed(() => {
+  const map = new Map()
+  for (const dt of deviceOptions.deviceTypes) {
+    for (const b of dt.brands || []) {
+      if (!map.has(b.value)) map.set(b.value, b)
+    }
+  }
+  return Array.from(map.values())
 })
 
 const normalizeDeviceType = v => {
@@ -313,86 +326,82 @@ const normalizeProtocol = (v, deviceType) => {
   return s
 }
 
-const ensureRuntimeShape = () => {
+const ensureConfigShape = () => {
   if (!deviceForm.config || typeof deviceForm.config !== 'object') {
-    deviceForm.config = { runtime: {} }
+    deviceForm.config = { pluginHost: DEFAULT_PLUGIN_HOST, pluginPort: DEFAULT_PLUGIN_PORT }
   }
-  if (!deviceForm.config.runtime || typeof deviceForm.config.runtime !== 'object') {
-    deviceForm.config.runtime = {}
-  }
-  if (!deviceForm.config.runtime.extra || typeof deviceForm.config.runtime.extra !== 'object') {
-    deviceForm.config.runtime.extra = { host: DEFAULT_PLUGIN_HOST, port: DEFAULT_PLUGIN_PORT }
-  }
-  if (!deviceForm.config.runtime.extra.host) deviceForm.config.runtime.extra.host = DEFAULT_PLUGIN_HOST
-  if (!deviceForm.config.runtime.extra.port) deviceForm.config.runtime.extra.port = DEFAULT_PLUGIN_PORT
+  if (!deviceForm.config.pluginHost) deviceForm.config.pluginHost = DEFAULT_PLUGIN_HOST
+  if (!deviceForm.config.pluginPort) deviceForm.config.pluginPort = DEFAULT_PLUGIN_PORT
 }
 
 const clearProtocolRuntimeParams = () => {
-  if (!deviceForm.config?.runtime) return
+  if (!deviceForm.config || typeof deviceForm.config !== 'object') return
   const allowed = new Set(protocolConnParams.value.map(p => p.name))
-  allowed.add('extra')
+  allowed.add('pluginHost')
+  allowed.add('pluginPort')
   allowed.add('model')
 
-  for (const k of Object.keys(deviceForm.config.runtime)) {
-    if (!allowed.has(k)) delete deviceForm.config.runtime[k]
+  for (const k of Object.keys(deviceForm.config)) {
+    if (!allowed.has(k)) delete deviceForm.config[k]
   }
 }
 
 const applyProtocolDefaults = () => {
-  ensureRuntimeShape()
+  ensureConfigShape()
   const params = protocolConnParams.value
 
   const allowed = new Set(params.map(p => p.name))
-  allowed.add('extra')
+  allowed.add('pluginHost')
+  allowed.add('pluginPort')
   allowed.add('model')
 
-  for (const k of Object.keys(deviceForm.config.runtime)) {
-    if (!allowed.has(k)) delete deviceForm.config.runtime[k]
+  for (const k of Object.keys(deviceForm.config)) {
+    if (!allowed.has(k)) delete deviceForm.config[k]
   }
 
   for (const opt of params) {
-    const curr = deviceForm.config.runtime[opt.name]
+    const curr = deviceForm.config[opt.name]
     const hasValue = curr !== undefined && curr !== null && curr !== ''
-    if (!hasValue && typeof opt.default !== 'undefined') {
-      deviceForm.config.runtime[opt.name] = deepClone(opt.default)
+    if (!hasValue && opt.default !== undefined) {
+      deviceForm.config[opt.name] = deepClone(opt.default)
     } else if (!hasValue) {
-      deviceForm.config.runtime[opt.name] = opt.type === 'int' || opt.type === 'float' ? 0 : ''
+      deviceForm.config[opt.name] = (opt.type === 'int' || opt.type === 'float') ? 0 : ''
     }
   }
 
   if (modelRelated.value) {
-    if (!deviceForm.config.runtime.model && deviceForm.model) {
-      deviceForm.config.runtime.model = deviceForm.model
-    }
-    if (!deviceForm.config.runtime.model && modelOptions.value.length > 0) {
-      deviceForm.config.runtime.model = modelOptions.value[0]
+    if (!deviceForm.config.model && deviceForm.model) deviceForm.config.model = deviceForm.model
+    if (!deviceForm.config.model && modelOptions.value.length > 0) {
+      deviceForm.config.model = modelOptions.value[0]
       deviceForm.model = modelOptions.value[0]
     }
   } else {
-    if (deviceForm.config.runtime.model) delete deviceForm.config.runtime.model
+    delete deviceForm.config.model
   }
 }
 
 const migrateExistingConfigForProtocol = () => {
-  ensureRuntimeShape()
+  ensureConfigShape()
+  const cfg = deviceForm.config
 
-  // 兼容旧 PLC Serial 字段名：serial_port/baud_rate -> serialPort/baudRate
-  if (deviceForm.device_type === 'PLC' && deviceForm.protocol === 'FX-Serial') {
-    const runtime = deviceForm.config.runtime
-    if (runtime.serial_port !== undefined && runtime.serialPort === undefined) runtime.serialPort = runtime.serial_port
-    if (runtime.baud_rate !== undefined && runtime.baudRate === undefined) runtime.baudRate = runtime.baud_rate
+  // flatten old {runtime:{extra:{host,port}, ...}}
+  const oldRuntime = cfg.runtime
+  if (oldRuntime && typeof oldRuntime === 'object') {
+    for (const k of Object.keys(oldRuntime)) {
+      if (k === 'extra') continue
+      if (cfg[k] === undefined) cfg[k] = oldRuntime[k]
+    }
+    if (oldRuntime.extra && typeof oldRuntime.extra === 'object') {
+      if (!cfg.pluginHost) cfg.pluginHost = oldRuntime.extra.host || DEFAULT_PLUGIN_HOST
+      if (!cfg.pluginPort) cfg.pluginPort = oldRuntime.extra.port || DEFAULT_PLUGIN_PORT
+    }
+    delete cfg.runtime
   }
 
-  const params = protocolConnParams.value
-  for (const opt of params) {
-    const rootVal = deviceForm.config.runtime[opt.name]
-    if (
-      rootVal === undefined &&
-      deviceForm.config.runtime.extra &&
-      deviceForm.config.runtime.extra[opt.name] !== undefined
-    ) {
-      deviceForm.config.runtime[opt.name] = deviceForm.config.runtime.extra[opt.name]
-    }
+  // migrate old serial field names
+  if (deviceForm.device_type === 'PLC' && deviceForm.protocol === 'FX-Serial') {
+    if (cfg.serial_port !== undefined && cfg.serialPort === undefined) cfg.serialPort = cfg.serial_port
+    if (cfg.baud_rate !== undefined && cfg.baudRate === undefined) cfg.baudRate = cfg.baud_rate
   }
 
   applyProtocolDefaults()
@@ -402,25 +411,24 @@ const handleDeviceTypeChange = () => {
   deviceForm.brand = ''
   deviceForm.protocol = ''
   deviceForm.model = ''
-  ensureRuntimeShape()
+  ensureConfigShape()
   clearProtocolRuntimeParams()
 }
 
 const handleBrandChange = () => {
   deviceForm.protocol = ''
   deviceForm.model = ''
-  ensureRuntimeShape()
+  ensureConfigShape()
   clearProtocolRuntimeParams()
 }
 
 const handleProtocolChange = () => {
   deviceForm.model = ''
-  ensureRuntimeShape()
+  ensureConfigShape()
   applyProtocolDefaults()
-
   if (modelRelated.value && modelOptions.value.length > 0) {
     deviceForm.model = modelOptions.value[0]
-    deviceForm.config.runtime.model = deviceForm.model
+    deviceForm.config.model = deviceForm.model
   }
 }
 
@@ -447,12 +455,8 @@ const initFormForAdd = () => {
   deviceForm.protocol = ''
   deviceForm.model = ''
   deviceForm.config = {
-    runtime: {
-      extra: {
-        host: DEFAULT_PLUGIN_HOST,
-        port: DEFAULT_PLUGIN_PORT
-      }
-    }
+    pluginHost: DEFAULT_PLUGIN_HOST,
+    pluginPort: DEFAULT_PLUGIN_PORT
   }
 }
 
@@ -462,26 +466,12 @@ const handleAdd = async () => {
     await fetchDeviceOptions()
   }
   dialogVisible.value = true
-
-  if (deviceOptions.deviceTypes.length > 0) {
-    deviceForm.device_type = deviceOptions.deviceTypes[0].value
-    const firstBrand = deviceOptions.deviceTypes[0].brands?.[0]
-    if (firstBrand) {
-      deviceForm.brand = firstBrand.value
-      const firstProtocol = firstBrand.protocols?.[0]
-      if (firstProtocol) {
-        deviceForm.protocol = firstProtocol.value
-        handleProtocolChange()
-      }
-    }
-  }
 }
 
 const handleEdit = async row => {
   deviceForm.id = row.id
   deviceForm.device_sn = row.device_sn
   deviceForm.device_name = row.device_name
-
   deviceForm.device_type = normalizeDeviceType(row.device_type)
   deviceForm.brand = normalizeBrand(row.brand)
   deviceForm.protocol = normalizeProtocol(row.protocol, deviceForm.device_type)
@@ -489,23 +479,23 @@ const handleEdit = async row => {
 
   try {
     const parsed = JSON.parse(row.config || '{}')
-    deviceForm.config = parsed && typeof parsed === 'object' ? parsed : { runtime: {} }
+    deviceForm.config = (parsed && typeof parsed === 'object') ? parsed : { pluginHost: DEFAULT_PLUGIN_HOST, pluginPort: DEFAULT_PLUGIN_PORT }
   } catch {
-    deviceForm.config = { runtime: {} }
+    deviceForm.config = { pluginHost: DEFAULT_PLUGIN_HOST, pluginPort: DEFAULT_PLUGIN_PORT }
   }
 
-  ensureRuntimeShape()
+  ensureConfigShape()
 
   if (!deviceOptions.deviceTypes.length) {
     await fetchDeviceOptions()
   }
 
-  applyProtocolDefaults()
+  // flatten & migrate old format
   migrateExistingConfigForProtocol()
 
   if (modelRelated.value && modelOptions.value.length > 0) {
-    deviceForm.model = deviceForm.config.runtime.model || modelOptions.value[0]
-    deviceForm.config.runtime.model = deviceForm.model
+    deviceForm.model = deviceForm.config.model || modelOptions.value[0]
+    deviceForm.config.model = deviceForm.model
   }
 
   dialogVisible.value = true
@@ -513,11 +503,10 @@ const handleEdit = async row => {
 
 const handleSubmit = async () => {
   await formRef.value.validate()
-
-  ensureRuntimeShape()
+  ensureConfigShape()
 
   if (modelRelated.value) {
-    deviceForm.config.runtime.model = deviceForm.model || deviceForm.config.runtime.model
+    deviceForm.config.model = deviceForm.model || deviceForm.config.model
   }
 
   const data = {
@@ -575,9 +564,7 @@ const handleReset = () => {
   handleFilter()
 }
 
-const handleRowClick = row => {
-  // placeholder
-}
+const handleRowClick = () => {}
 
 const handleStart = async row => {
   const action = row.status === 1 ? 'stop' : 'start'
@@ -601,13 +588,6 @@ const handleDelete = async row => {
   }
 }
 
-watch(
-  () => deviceForm.model,
-  val => {
-    if (modelRelated.value) deviceForm.config.runtime.model = val
-  }
-)
-
 onMounted(() => {
   fetchDevices()
   fetchDeviceOptions()
@@ -619,11 +599,5 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.section-title {
-  font-weight: 700;
-  margin: 12px 0 8px;
-  font-size: 16px;
 }
 </style>
