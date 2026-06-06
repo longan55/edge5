@@ -1,6 +1,7 @@
 package global
 
 import (
+	"compress/gzip"
 	"edge5/config"
 	"fmt"
 	"io"
@@ -24,7 +25,7 @@ func InitLogger() error {
 		rotate.WithLinkName(path.Join(config.CONFIG.Log.Path, "latest.log")),
 		rotate.WithMaxAge(time.Duration(config.CONFIG.Log.MaxAge)*24*time.Hour),
 		rotate.WithRotationTime(time.Duration(config.CONFIG.Log.RotationTime)*time.Hour),
-		rotate.WithHandler(rotate.HandlerFunc(CompressLog)),
+		rotate.WithHandler(rotate.HandlerFunc(compressLog)),
 	)
 	if err != nil {
 		return fmt.Errorf("rotate.New error: %w", err)
@@ -34,7 +35,7 @@ func InitLogger() error {
 		path.Join(config.CONFIG.Log.Path, "error.%Y%m%d.log"),
 		rotate.WithMaxAge(time.Duration(config.CONFIG.Log.MaxAge)*24*time.Hour),          //文件最大保存时间
 		rotate.WithRotationTime(time.Duration(config.CONFIG.Log.RotationTime)*time.Hour), //日志切割时间间隔
-		rotate.WithHandler(rotate.HandlerFunc(CompressLog)),                              //注册 日志切割时回调函数-压缩日志
+		rotate.WithHandler(rotate.HandlerFunc(compressLog)),                              //注册 日志切割时回调函数-压缩日志
 	)
 	if err != nil {
 		return fmt.Errorf("rotate.New error: %w", err)
@@ -83,4 +84,53 @@ func InitLogger() error {
 	Logger.Info("日志记录器创建成功")
 	Logger.Info("配置文件", zap.Any("Content", viper.AllSettings()))
 	return nil
+}
+
+func compressLog(event rotate.Event) {
+	if !config.CONFIG.Log.Compress {
+		return
+	}
+
+	if event.Type() != rotate.FileRotatedEventType {
+		return
+	}
+
+	fileevent := event.(*rotate.FileRotatedEvent)
+	prePath := fileevent.PreviousFile()
+	outputFile := prePath + ".gz"
+
+	if prePath == "" {
+		return
+	}
+
+	inFile, err := os.Open(prePath)
+	if err != nil {
+		Logger.Error("compress log error: open log file fail", zap.String("FilePath", prePath), zap.Error(err))
+		return
+	}
+	defer inFile.Close()
+
+	outFile, err := os.Create(outputFile)
+	if err != nil {
+		Logger.Error("compress log error: create compress file fail", zap.String("FilePath", prePath), zap.Error(err))
+		return
+	}
+	defer outFile.Close()
+
+	gzipWriter := gzip.NewWriter(outFile)
+	defer gzipWriter.Close()
+
+	buf := make([]byte, 1024*1024)
+	for {
+		n, err := inFile.Read(buf)
+		if err != nil && err != io.EOF {
+			return
+		}
+		if n == 0 {
+			break
+		}
+		gzipWriter.Write(buf[:n])
+	}
+
+	os.Remove(prePath)
 }
