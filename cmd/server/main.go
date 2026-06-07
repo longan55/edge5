@@ -7,6 +7,8 @@ import (
 	"edge5/internal/model"
 	"edge5/internal/pkg/cache"
 	"edge5/internal/pkg/connector"
+	"edge5/internal/pkg/protocol"
+	_ "edge5/internal/pkg/protocol/builtin"
 	"edge5/internal/repository"
 	"edge5/internal/router"
 	"fmt"
@@ -47,10 +49,11 @@ func run() error {
 	}
 
 	initConnector()
-	initPlugin()
 
-	// 启动时：优先使用数据库第一条；若表为空则用配置文件
-	// 数据库存在时以 on/off 为准：on=true 才自动连接
+	if err := initPlugin(); err != nil {
+		global.Logger.Warn("协议系统初始化失败", zap.Error(err))
+	}
+
 	if err := initMQTT(); err != nil {
 		global.Logger.Warn("MQTT初始化失败，将稍后重试", zap.Error(err))
 	}
@@ -82,6 +85,7 @@ func run() error {
 	waitForSignal()
 
 	global.Logger.Info("程序退出中...")
+	protocol.Shutdown(global.Logger)
 	global.GracefullyExit()
 	global.Logger.Info("程序已退出")
 
@@ -97,6 +101,7 @@ func autoMigrate() error {
 		&model.MQTTConfig{},
 		&model.Device{},
 		&model.DeviceStatus{},
+		&model.ProtocolRegistry{},
 	)
 }
 
@@ -113,14 +118,11 @@ func initConnector() {
 	global.ConnectorMgr = connector.NewConnectorManager()
 }
 
-func initPlugin() {
-	// if config.CONFIG.Plugin.Enabled {
-	// 	global.PluginMgr = plugin.NewPluginManager()
-	// }
+func initPlugin() error {
+	return protocol.Init(global.DB, global.Logger)
 }
 
 func initMQTT() error {
-	// 启动时规范化：只保留第一条，并兼容老字段 status -> on
 	if err := normalizeMQTTConfigTable(); err != nil {
 		global.Logger.Warn("MQTT 配置表规范化失败，将继续按现有数据尝试连接", zap.Error(err))
 	}
@@ -131,7 +133,6 @@ func initMQTT() error {
 		return err
 	}
 
-	// 空表：使用配置文件；连接成功后写 on=true
 	if cfg == nil {
 		global.MQTTClient = global.NewMqttClient()
 		if err := global.MQTTClient.Connect(); err != nil {
@@ -157,7 +158,6 @@ func initMQTT() error {
 		return nil
 	}
 
-	// 非空表：严格看 on/off
 	syncMQTTToGlobal(cfg)
 
 	if !cfg.On {
@@ -170,7 +170,6 @@ func initMQTT() error {
 		global.Logger.Warn("MQTT 初始连接失败，将依赖自动重连", zap.Error(err))
 	}
 
-	// 连接成功后确保 on=true
 	if waitMQTTConnected(6*time.Second, 500*time.Millisecond) {
 		cfg.On = true
 		_ = mqttRepo.Update(cfg)
@@ -200,10 +199,7 @@ func waitMQTTConnected(timeout time.Duration, pollInterval time.Duration) bool {
 	return global.MQTTClient != nil && global.MQTTClient.IsConnected()
 }
 
-// 兼容老表：如果表里还存在 status 字段，则 status=1 -> on=true
-// 并强制 mqtt_config 只保留第一条记录
 func normalizeMQTTConfigTable() error {
-	// 兼容老字段 status -> on
 	if global.DB.Migrator().HasColumn(&model.MQTTConfig{}, "status") {
 		_ = global.DB.Exec("UPDATE mqtt_config SET on = CASE WHEN status = 1 THEN 1 ELSE 0 END WHERE status IS NOT NULL").Error
 	}
@@ -216,7 +212,6 @@ func normalizeMQTTConfigTable() error {
 	if cfg == nil {
 		return nil
 	}
-	// repository.Update 会覆盖第一条并删除其它
 	return mqttRepo.Update(cfg)
 }
 
