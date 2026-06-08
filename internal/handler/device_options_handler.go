@@ -7,25 +7,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type DeviceOptionsHandler struct {
-	// 从协议注册表动态获取
-}
+type DeviceOptionsHandler struct{}
 
 func NewDeviceOptionsHandler() *DeviceOptionsHandler {
 	return &DeviceOptionsHandler{}
 }
 
 // GetDeviceOptions 从协议注册表动态生成设备添加选项
-// 包括设备类型层级结构和每个协议的连接参数
 func (h *DeviceOptionsHandler) GetDeviceOptions(c *gin.Context) {
 	reg := protocol.DefaultRegistry()
 	protocols := reg.List()
-
 	resp := buildOptions(protocols)
 	response.Success(c, resp)
 }
 
-// optionsResponse 前端设备添加选项响应结构
 type optionsResponse struct {
 	DeviceTypes     []deviceTypeOption              `json:"deviceTypes"`
 	ProtocolOptions map[string]protocolOptionsGroup `json:"protocolOptions"`
@@ -63,19 +58,23 @@ type protocolConnectionOption struct {
 	Choices  []interface{} `json:"choices,omitempty"`
 }
 
-func buildOptions(protocols []protocol.ProtocolInfo) *optionsResponse {
+func buildOptions(protocols []protocol.Metadata) *optionsResponse {
 	resp := &optionsResponse{
 		DeviceTypes:     make([]deviceTypeOption, 0),
 		ProtocolOptions: make(map[string]protocolOptionsGroup),
 	}
 
-	// 按 deviceType → brand → protocol 构建层级
-	typeMap := make(map[string]map[string][]protocol.ProtocolInfo)
+	typeMap := make(map[string]map[string][]protocol.Metadata)
 	for _, p := range protocols {
-		if typeMap[p.DeviceType] == nil {
-			typeMap[p.DeviceType] = make(map[string][]protocol.ProtocolInfo)
+		deviceType := protocol.GetInfoString(p, "deviceType")
+		brand := protocol.GetInfoString(p, "brand")
+		if deviceType == "" || brand == "" {
+			continue
 		}
-		typeMap[p.DeviceType][p.Brand] = append(typeMap[p.DeviceType][p.Brand], p)
+		if typeMap[deviceType] == nil {
+			typeMap[deviceType] = make(map[string][]protocol.Metadata)
+		}
+		typeMap[deviceType][brand] = append(typeMap[deviceType][brand], p)
 	}
 
 	for deviceType, brands := range typeMap {
@@ -91,36 +90,39 @@ func buildOptions(protocols []protocol.ProtocolInfo) *optionsResponse {
 				Protocols: make([]protocolOption, 0),
 			}
 			for _, p := range protos {
+				name := protocol.GetInfoString(p, "name")
+				models := protocol.GetInfoStrings(p, "models")
+
 				po := protocolOption{
-					Value:        p.Name,
-					Label:        p.Name,
-					ModelRelated: len(p.Models) > 0,
-					Models:       p.Models,
+					Value:        name,
+					Label:        name,
+					ModelRelated: len(models) > 0,
+					Models:       models,
 				}
 				bo.Protocols = append(bo.Protocols, po)
 
-				// 构建连接参数
+				cp := protocol.ExtractConnectionParams(p)
 				opts := make([]protocolConnectionOption, 0)
-				for _, cp := range p.ConnectionParams {
+				for _, param := range cp {
 					opt := protocolConnectionOption{
-						Name:     cp.Name,
-						CName:    cp.CName,
-						Type:     cp.Type,
-						Required: cp.Required,
+						Name:     param.Name,
+						CName:    param.CName,
+						Type:     param.Type,
+						Required: param.Required,
 					}
-					if cp.Default != "" {
-						opt.Default = cp.Default
+					if param.Default != "" {
+						opt.Default = param.Default
 					}
-					if len(cp.Choices) > 0 {
-						choices := make([]interface{}, len(cp.Choices))
-						for i, c := range cp.Choices {
+					if len(param.Choices) > 0 {
+						choices := make([]interface{}, len(param.Choices))
+						for i, c := range param.Choices {
 							choices[i] = c
 						}
 						opt.Choices = choices
 					}
 					opts = append(opts, opt)
 				}
-				resp.ProtocolOptions[p.Name] = protocolOptionsGroup{Options: opts}
+				resp.ProtocolOptions[name] = protocolOptionsGroup{Options: opts}
 			}
 			dto.Brands = append(dto.Brands, bo)
 		}

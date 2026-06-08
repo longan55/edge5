@@ -11,17 +11,15 @@ import (
 
 // deviceConn 设备连接状态
 type deviceConn struct {
-	deviceID    uint64
-	deviceSn    string
-	protocol    string
-	protocolObj Protocol
-	cancel      context.CancelFunc
-	done        chan struct{}
+	deviceID uint64
+	deviceSn string
+	protocol string
+	proto    DeviceCommProtocol
+	cancel   context.CancelFunc
+	done     chan struct{}
 }
 
 // Manager 协议连接管理器
-// 负责管理设备与协议之间的连接生命周期
-// 取代 internal/service/devicePluginRuntime
 type Manager struct {
 	mu      sync.Mutex
 	devices map[uint64]*deviceConn
@@ -40,20 +38,14 @@ func NewManager(logger *zap.Logger) *Manager {
 }
 
 // Start 启动设备连接
-// deviceID: 设备 ID
-// deviceSn: 设备序列号
-// protocolName: 协议名称
-// params: 连接参数
-// subscribeInterval: 订阅间隔（秒）
-func (m *Manager) Start(deviceID uint64, deviceSn string, protocolName string, params map[string]string, subscribeInterval int32) error {
+func (m *Manager) Start(deviceID uint64, deviceSn string, protocolName string, params Metadata) error {
 	m.mu.Lock()
 	if _, ok := m.devices[deviceID]; ok {
 		m.mu.Unlock()
-		return nil // 已连接
+		return nil
 	}
 	m.mu.Unlock()
 
-	// 获取协议实现
 	reg := DefaultRegistry()
 	proto, ok := reg.Get(protocolName)
 	if !ok {
@@ -62,8 +54,7 @@ func (m *Manager) Start(deviceID uint64, deviceSn string, protocolName string, p
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 连接设备
-	if err := proto.Connect(ctx, deviceSn, params); err != nil {
+	if err := proto.Connect(ctx, params); err != nil {
 		cancel()
 		return fmt.Errorf("protocol connect failed: %w", err)
 	}
@@ -71,54 +62,28 @@ func (m *Manager) Start(deviceID uint64, deviceSn string, protocolName string, p
 	done := make(chan struct{})
 
 	conn := &deviceConn{
-		deviceID:    deviceID,
-		deviceSn:    deviceSn,
-		protocol:    protocolName,
-		protocolObj: proto,
-		cancel:      cancel,
-		done:        done,
+		deviceID: deviceID,
+		deviceSn: deviceSn,
+		protocol: protocolName,
+		proto:    proto,
+		cancel:   cancel,
+		done:     done,
 	}
 
 	m.mu.Lock()
 	m.devices[deviceID] = conn
 	m.mu.Unlock()
 
-	// 启动订阅循环
 	go func() {
 		defer close(done)
 		defer func() {
 			m.mu.Lock()
 			delete(m.devices, deviceID)
 			m.mu.Unlock()
-			_ = proto.Disconnect(context.Background(), deviceSn)
+			_ = proto.Disconnect(context.Background())
 		}()
-
-		ch, err := proto.SubscribeData(ctx, deviceSn, nil, subscribeInterval)
-		if err != nil {
-			m.logger.Warn("订阅数据失败",
-				zap.Uint64("device_id", deviceID),
-				zap.String("device_sn", deviceSn),
-				zap.Error(err))
-			return
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-ch:
-				if !ok {
-					return
-				}
-				m.logger.Debug("收到设备数据",
-					zap.Uint64("device_id", deviceID),
-					zap.String("device_sn", deviceSn),
-					zap.Int("values", len(msg.Values)),
-				)
-				// 由上层处理 msg
-				_ = msg
-			}
-		}
+		// 等待取消信号
+		<-ctx.Done()
 	}()
 
 	m.logger.Info("设备协议连接已启动",
@@ -144,17 +109,15 @@ func (m *Manager) Stop(deviceID uint64) error {
 		conn.cancel()
 	}
 
-	// 等待订阅循环结束
 	select {
 	case <-conn.done:
 	case <-time.After(5 * time.Second):
 	}
 
-	// 断开连接
-	if conn.protocolObj != nil {
+	if conn.proto != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_ = conn.protocolObj.Disconnect(ctx, conn.deviceSn)
+		_ = conn.proto.Disconnect(ctx)
 	}
 
 	m.logger.Info("设备协议连接已停止",

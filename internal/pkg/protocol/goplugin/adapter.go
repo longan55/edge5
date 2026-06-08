@@ -12,44 +12,23 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// ConnectionParam 协议连接参数
-type ConnectionParam struct {
-	Name     string   `json:"name"`
-	CName    string   `json:"cName"`
-	Type     string   `json:"type"`
-	Required bool     `json:"required"`
-	Default  string   `json:"default,omitempty"`
-	Choices  []string `json:"choices,omitempty"`
-}
-
-// Info 协议信息（由 registry 转换为 protocol.ProtocolInfo）
-type Info struct {
-	Name             string
-	Version          string
-	DeviceType       string
-	Brand            string
-	Models           []string
-	ConnectionParams []ConnectionParam
-	Source           string
-	PluginPath       string
-}
-
-// DataMessage 订阅数据消息
-type DataMessage struct {
-	DeviceSn  string
-	Values    map[string][]byte
-	Timestamp int64
-}
-
-// PluginAdapter 将 gRPC DevicePlugin 适配为统一的 Protocol 接口
+// PluginAdapter 将 gRPC DevicePlugin 适配为统一的协议接口。
+// 注意：此包不导入 protocol 包（避免循环导入）。
+// registry.go 中的 bridge 类型负责将本适配器转换为 protocol.DeviceCommProtocol。
 type PluginAdapter struct {
 	pluginPath string
 	grpcAddr   string
 	client     pb.DevicePluginClient
 	conn       *grpc.ClientConn
-	info       *Info
+	info       map[string]any
+	states     map[string]*pluginState
 	mu         sync.RWMutex
 	logger     *zap.Logger
+}
+
+type pluginState struct {
+	connected bool
+	deviceSn  string
 }
 
 // NewPluginAdapter 创建 gRPC 插件适配器
@@ -57,6 +36,8 @@ func NewPluginAdapter(pluginPath, grpcAddr string) *PluginAdapter {
 	return &PluginAdapter{
 		pluginPath: pluginPath,
 		grpcAddr:   grpcAddr,
+		info:       make(map[string]any),
+		states:     make(map[string]*pluginState),
 		logger:     zap.NewNop(),
 	}
 }
@@ -93,41 +74,48 @@ func (a *PluginAdapter) Init() error {
 		return fmt.Errorf("get plugin info failed: %w", err)
 	}
 
-	info := &Info{
-		Name:       infoResp.GetName(),
-		Version:    infoResp.GetVersion(),
-		DeviceType: infoResp.GetDeviceType(),
-		Brand:      infoResp.GetBrand(),
-		Source:     "plugin",
-		PluginPath: a.pluginPath,
-		Models:     infoResp.GetProtocols(),
+	a.info = map[string]any{
+		"name":       infoResp.GetName(),
+		"version":    infoResp.GetVersion(),
+		"deviceType": infoResp.GetDeviceType(),
+		"brand":      infoResp.GetBrand(),
+		"models":     infoResp.GetProtocols(),
+		"source":     "plugin",
+		"pluginPath": a.pluginPath,
 	}
-	info.ConnectionParams = parseDefaultParams(info.Name)
+	if cp := defaultConnectionParams[infoResp.GetName()]; cp != nil {
+		a.info["connectionParams"] = cp
+	} else {
+		a.info["connectionParams"] = []map[string]any{
+			{"name": "ip", "cName": "IP地址", "type": "string", "required": true},
+			{"name": "port", "cName": "端口号", "type": "int", "required": true},
+		}
+	}
 
 	a.conn = conn
 	a.client = client
-	a.info = info
 
 	a.logger.Info("gRPC 插件适配器初始化成功",
-		zap.String("name", info.Name),
+		zap.String("name", infoResp.GetName()),
 		zap.String("addr", a.grpcAddr),
-		zap.String("version", info.Version))
+		zap.String("version", infoResp.GetVersion()))
 
 	return nil
 }
 
-// GetInfo 返回协议信息
-func (a *PluginAdapter) GetInfo() Info {
+// GetInfo 返回协议元信息（map 格式）
+func (a *PluginAdapter) GetInfo() map[string]any {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if a.info == nil {
-		return Info{}
+	result := make(map[string]any, len(a.info))
+	for k, v := range a.info {
+		result[k] = v
 	}
-	return *a.info
+	return result
 }
 
 // Connect 建立设备连接
-func (a *PluginAdapter) Connect(ctx context.Context, deviceSn string, params map[string]string) error {
+func (a *PluginAdapter) Connect(ctx context.Context, params map[string]any) error {
 	a.mu.RLock()
 	client := a.client
 	a.mu.RUnlock()
@@ -136,9 +124,22 @@ func (a *PluginAdapter) Connect(ctx context.Context, deviceSn string, params map
 		return fmt.Errorf("plugin not initialized")
 	}
 
+	deviceSn, _ := params["deviceSn"].(string)
+	if deviceSn == "" {
+		return fmt.Errorf("missing deviceSn in params")
+	}
+
+	protoParams := make(map[string]string)
+	for k, v := range params {
+		if k == "deviceSn" {
+			continue
+		}
+		protoParams[k] = fmt.Sprintf("%v", v)
+	}
+
 	resp, err := client.Connect(ctx, &pb.ConnectRequest{
 		DeviceSn: deviceSn,
-		Params:   params,
+		Params:   protoParams,
 	})
 	if err != nil {
 		return fmt.Errorf("plugin connect error: %w", err)
@@ -146,11 +147,16 @@ func (a *PluginAdapter) Connect(ctx context.Context, deviceSn string, params map
 	if !resp.GetSuccess() {
 		return fmt.Errorf("plugin connect failed: %s", resp.GetMessage())
 	}
+
+	a.mu.Lock()
+	a.states[deviceSn] = &pluginState{connected: true, deviceSn: deviceSn}
+	a.mu.Unlock()
+
 	return nil
 }
 
-// Disconnect 断开设备连接
-func (a *PluginAdapter) Disconnect(ctx context.Context, deviceSn string) error {
+// Disconnect 断开所有设备连接
+func (a *PluginAdapter) Disconnect(ctx context.Context) error {
 	a.mu.RLock()
 	client := a.client
 	a.mu.RUnlock()
@@ -159,96 +165,38 @@ func (a *PluginAdapter) Disconnect(ctx context.Context, deviceSn string) error {
 		return nil
 	}
 
-	_, _ = client.Disconnect(ctx, &pb.DisconnectRequest{DeviceSn: deviceSn})
+	a.mu.Lock()
+	devices := make([]string, 0, len(a.states))
+	for sn := range a.states {
+		devices = append(devices, sn)
+	}
+	a.mu.Unlock()
+
+	for _, sn := range devices {
+		_, _ = client.Disconnect(ctx, &pb.DisconnectRequest{DeviceSn: sn})
+		a.mu.Lock()
+		delete(a.states, sn)
+		a.mu.Unlock()
+	}
+
 	return nil
 }
 
-// ReadData 读取数据
-func (a *PluginAdapter) ReadData(ctx context.Context, deviceSn string, addresses []string) (map[string][]byte, error) {
+// IsConnected 是否有设备在线
+func (a *PluginAdapter) IsConnected() bool {
 	a.mu.RLock()
-	client := a.client
-	a.mu.RUnlock()
-
-	if client == nil {
-		return nil, fmt.Errorf("plugin not initialized")
-	}
-
-	resp, err := client.ReadData(ctx, &pb.ReadRequest{
-		DeviceSn:  deviceSn,
-		Addresses: addresses,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("plugin read error: %w", err)
-	}
-	if !resp.GetSuccess() {
-		return nil, fmt.Errorf("plugin read failed: %s", resp.GetMessage())
-	}
-	return resp.GetValues(), nil
+	defer a.mu.RUnlock()
+	return len(a.states) > 0
 }
 
-// WriteData 写入数据
-func (a *PluginAdapter) WriteData(ctx context.Context, deviceSn string, values map[string][]byte) error {
-	a.mu.RLock()
-	client := a.client
-	a.mu.RUnlock()
-
-	if client == nil {
-		return fmt.Errorf("plugin not initialized")
-	}
-
-	resp, err := client.WriteData(ctx, &pb.WriteRequest{
-		DeviceSn: deviceSn,
-		Values:   values,
-	})
-	if err != nil {
-		return fmt.Errorf("plugin write error: %w", err)
-	}
-	if !resp.GetSuccess() {
-		return fmt.Errorf("plugin write failed: %s", resp.GetMessage())
-	}
-	return nil
+// ReadBatch 批量读取（直接使用 interface{} 避免循环导入）
+func (a *PluginAdapter) ReadBatch(ctx context.Context, req interface{}) (interface{}, error) {
+	return nil, fmt.Errorf("ReadBatch not implemented for gRPC plugin adapter")
 }
 
-// SubscribeData 订阅实时数据
-func (a *PluginAdapter) SubscribeData(ctx context.Context, deviceSn string, addresses []string, interval int32) (<-chan DataMessage, error) {
-	a.mu.RLock()
-	client := a.client
-	a.mu.RUnlock()
-
-	if client == nil {
-		return nil, fmt.Errorf("plugin not initialized")
-	}
-
-	stream, err := client.SubscribeData(ctx, &pb.SubscribeRequest{
-		DeviceSn:  deviceSn,
-		Addresses: addresses,
-		Interval:  interval,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("plugin subscribe error: %w", err)
-	}
-
-	ch := make(chan DataMessage, 100)
-	go func() {
-		defer close(ch)
-		for {
-			resp, err := stream.Recv()
-			if err != nil {
-				return
-			}
-			select {
-			case ch <- DataMessage{
-				DeviceSn:  resp.GetDeviceSn(),
-				Values:    resp.GetValues(),
-				Timestamp: resp.GetTimestamp(),
-			}:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return ch, nil
+// WriteBatch 批量写入（直接使用 interface{} 避免循环导入）
+func (a *PluginAdapter) WriteBatch(ctx context.Context, req interface{}) error {
+	return fmt.Errorf("WriteBatch not implemented for gRPC plugin adapter")
 }
 
 // Close 关闭 gRPC 连接
@@ -263,40 +211,30 @@ func (a *PluginAdapter) Close() error {
 }
 
 // 默认连接参数配置
-var defaultConnectionParams = map[string][]ConnectionParam{
+var defaultConnectionParams = map[string][]map[string]any{
 	"MC-3E": {
-		{Name: "ip", CName: "IP地址", Type: "string", Required: true},
-		{Name: "port", CName: "端口号", Type: "int", Required: true, Default: "6000"},
-		{Name: "pcNum", CName: "PC编号", Type: "string", Required: true, Default: "0xFF"},
+		{"name": "ip", "cName": "IP地址", "type": "string", "required": true},
+		{"name": "port", "cName": "端口号", "type": "int", "required": true, "default": "6000"},
+		{"name": "pcNum", "cName": "PC编号", "type": "string", "required": true, "default": "0xFF"},
 	},
 	"FX-Serial": {
-		{Name: "serialPort", CName: "串口号", Type: "string", Required: true},
-		{Name: "baudRate", CName: "波特率", Type: "int", Required: true, Default: "9600", Choices: []string{"9600", "19200", "38400", "115200"}},
-		{Name: "dataBit", CName: "数据位", Type: "int", Required: true, Default: "7"},
-		{Name: "stopBit", CName: "停止位", Type: "float", Required: true, Default: "1"},
-		{Name: "parity", CName: "校验位", Type: "string", Required: true, Default: "even", Choices: []string{"odd", "even"}},
+		{"name": "serialPort", "cName": "串口号", "type": "string", "required": true},
+		{"name": "baudRate", "cName": "波特率", "type": "int", "required": true, "default": "9600", "choices": []string{"9600", "19200", "38400", "115200"}},
+		{"name": "dataBit", "cName": "数据位", "type": "int", "required": true, "default": "7"},
+		{"name": "stopBit", "cName": "停止位", "type": "float", "required": true, "default": "1"},
+		{"name": "parity", "cName": "校验位", "type": "string", "required": true, "default": "even", "choices": []string{"odd", "even"}},
 	},
 	"S7Comm": {
-		{Name: "ip", CName: "IP地址", Type: "string", Required: true},
-		{Name: "rack", CName: "机架号", Type: "int", Required: true, Default: "0"},
-		{Name: "slot", CName: "槽号", Type: "int", Required: true, Default: "2"},
+		{"name": "ip", "cName": "IP地址", "type": "string", "required": true},
+		{"name": "rack", "cName": "机架号", "type": "int", "required": true, "default": "0"},
+		{"name": "slot", "cName": "槽号", "type": "int", "required": true, "default": "2"},
 	},
 	"Focas": {
-		{Name: "ip", CName: "IP地址", Type: "string", Required: true},
-		{Name: "port", CName: "端口号", Type: "int", Required: true, Default: "8193"},
+		{"name": "ip", "cName": "IP地址", "type": "string", "required": true},
+		{"name": "port", "cName": "端口号", "type": "int", "required": true, "default": "8193"},
 	},
 	"Melsec-CNC": {
-		{Name: "ip", CName: "IP地址", Type: "string", Required: true},
-		{Name: "port", CName: "端口号", Type: "int", Required: true, Default: "683"},
+		{"name": "ip", "cName": "IP地址", "type": "string", "required": true},
+		{"name": "port", "cName": "端口号", "type": "int", "required": true, "default": "683"},
 	},
-}
-
-func parseDefaultParams(protocolName string) []ConnectionParam {
-	if params, ok := defaultConnectionParams[protocolName]; ok {
-		return params
-	}
-	return []ConnectionParam{
-		{Name: "ip", CName: "IP地址", Type: "string", Required: true},
-		{Name: "port", CName: "端口号", Type: "int", Required: true},
-	}
 }

@@ -18,7 +18,7 @@ import (
 
 // globalRegistry 全局协议注册表
 var globalRegistry = &registry{
-	protocols: make(map[string]Protocol),
+	protocols: make(map[string]DeviceCommProtocol),
 	plugins:   make(map[string]*pluginProcess),
 }
 
@@ -30,16 +30,15 @@ func DefaultRegistry() ProtocolRegistry {
 // registry 协议注册表实现
 type registry struct {
 	mu        sync.RWMutex
-	protocols map[string]Protocol
+	protocols map[string]DeviceCommProtocol
 	plugins   map[string]*pluginProcess
 	db        *gorm.DB
 	logger    *zap.Logger
 }
 
 type pluginProcess struct {
-	cmd    *exec.Cmd
-	info   ProtocolInfo
-	cancel func()
+	cmd  *exec.Cmd
+	info Metadata
 }
 
 // SetDB 设置数据库连接（用于 SyncToDB）
@@ -56,45 +55,46 @@ func (r *registry) SetLogger(logger *zap.Logger) {
 }
 
 // Register 注册一个协议实现
-func (r *registry) Register(proto Protocol) error {
+func (r *registry) Register(proto DeviceCommProtocol) error {
 	info := proto.Info()
-	if info.Name == "" {
-		return fmt.Errorf("protocol name cannot be empty")
+	name := GetInfoString(info, "name")
+	if name == "" {
+		return fmt.Errorf("protocol name cannot be empty (metadata missing 'name')")
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.protocols[info.Name]; exists {
-		return fmt.Errorf("protocol %q already registered", info.Name)
+	if _, exists := r.protocols[name]; exists {
+		return fmt.Errorf("protocol %q already registered", name)
 	}
 
-	r.protocols[info.Name] = proto
+	r.protocols[name] = proto
 	if r.logger != nil {
 		r.logger.Info("协议已注册",
-			zap.String("name", info.Name),
-			zap.String("device_type", info.DeviceType),
-			zap.String("brand", info.Brand),
-			zap.String("source", info.Source),
+			zap.String("name", name),
+			zap.String("device_type", GetInfoString(info, "deviceType")),
+			zap.String("brand", GetInfoString(info, "brand")),
+			zap.String("source", GetInfoString(info, "source")),
 		)
 	}
 	return nil
 }
 
 // Get 根据协议名称获取协议实现
-func (r *registry) Get(name string) (Protocol, bool) {
+func (r *registry) Get(name string) (DeviceCommProtocol, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	proto, ok := r.protocols[name]
 	return proto, ok
 }
 
-// List 列出所有已注册的协议信息
-func (r *registry) List() []ProtocolInfo {
+// List 列出所有已注册的协议元信息
+func (r *registry) List() []Metadata {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	infos := make([]ProtocolInfo, 0, len(r.protocols))
+	infos := make([]Metadata, 0, len(r.protocols))
 	for _, proto := range r.protocols {
 		infos = append(infos, proto.Info())
 	}
@@ -112,9 +112,21 @@ func (r *registry) SyncToDB() error {
 
 	for name, proto := range r.protocols {
 		info := proto.Info()
-		paramsJSON := ConnectionParamsToJSON(info.ConnectionParams)
 
-		modelsJSON, err := json.Marshal(info.Models)
+		version := GetInfoString(info, "version")
+		deviceType := GetInfoString(info, "deviceType")
+		brand := GetInfoString(info, "brand")
+		source := GetInfoString(info, "source")
+		if source == "" {
+			source = "builtin"
+		}
+		pluginPath := GetInfoString(info, "pluginPath")
+		models := GetInfoStrings(info, "models")
+
+		cp := ExtractConnectionParams(info)
+		paramsJSON := ConnectionParamsToJSON(cp)
+
+		modelsJSON, err := json.Marshal(models)
 		if err != nil {
 			modelsJSON = []byte("[]")
 		}
@@ -130,8 +142,8 @@ func (r *registry) SyncToDB() error {
 				 plugin_path = ?, connection_params = ?, models = ?,
 				 enabled = 1
 				 WHERE name = ?`,
-				info.Version, info.DeviceType, info.Brand, info.Source,
-				info.PluginPath, paramsJSON, string(modelsJSON),
+				version, deviceType, brand, source,
+				pluginPath, paramsJSON, string(modelsJSON),
 				name,
 			).Error
 		} else {
@@ -139,8 +151,8 @@ func (r *registry) SyncToDB() error {
 				`INSERT INTO protocol_registry
 				 (name, version, device_type, brand, source, plugin_path, connection_params, models, enabled)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-				name, info.Version, info.DeviceType, info.Brand, info.Source,
-				info.PluginPath, paramsJSON, string(modelsJSON),
+				name, version, deviceType, brand, source,
+				pluginPath, paramsJSON, string(modelsJSON),
 			).Error
 		}
 
@@ -169,11 +181,13 @@ func (r *registry) StartPlugins() error {
 
 	for name, proto := range r.protocols {
 		info := proto.Info()
-		if info.Source != "plugin" {
+		source := GetInfoString(info, "source")
+		if source != "plugin" {
 			continue
 		}
 
-		if info.PluginPath == "" {
+		pluginPath := GetInfoString(info, "pluginPath")
+		if pluginPath == "" {
 			if r.logger != nil {
 				r.logger.Warn("插件路径为空，跳过启动",
 					zap.String("name", name))
@@ -181,7 +195,7 @@ func (r *registry) StartPlugins() error {
 			continue
 		}
 
-		absPath, err := filepath.Abs(info.PluginPath)
+		absPath, err := filepath.Abs(pluginPath)
 		if err != nil {
 			if r.logger != nil {
 				r.logger.Warn("获取插件绝对路径失败",
@@ -257,69 +271,45 @@ func (r *registry) StopPlugins() error {
 	return nil
 }
 
-// gopluginBridge 将 goplugin.PluginAdapter 适配为 Protocol 接口
+// ---------------------------------------------------------------------------
+// gopluginBridge — 将 PluginAdapter 适配为 DeviceCommProtocol
+// ---------------------------------------------------------------------------
+
 type gopluginBridge struct {
 	adapter *goplugin.PluginAdapter
 }
 
-func (b *gopluginBridge) Info() ProtocolInfo {
-	gi := b.adapter.GetInfo()
-	cp := make([]ConnectionParam, len(gi.ConnectionParams))
-	for i, p := range gi.ConnectionParams {
-		cp[i] = ConnectionParam{
-			Name:     p.Name,
-			CName:    p.CName,
-			Type:     p.Type,
-			Required: p.Required,
-			Default:  p.Default,
-			Choices:  p.Choices,
-		}
-	}
-	return ProtocolInfo{
-		Name:             gi.Name,
-		Version:          gi.Version,
-		DeviceType:       gi.DeviceType,
-		Brand:            gi.Brand,
-		Models:           gi.Models,
-		ConnectionParams: cp,
-		Source:           gi.Source,
-		PluginPath:       gi.PluginPath,
-	}
+func (b *gopluginBridge) Info() Metadata {
+	info := b.adapter.GetInfo()
+	return Metadata(info)
 }
 
-func (b *gopluginBridge) Connect(ctx context.Context, deviceSn string, params map[string]string) error {
-	return b.adapter.Connect(ctx, deviceSn, params)
+func (b *gopluginBridge) Connect(ctx context.Context, params Metadata) error {
+	return b.adapter.Connect(ctx, params)
 }
 
-func (b *gopluginBridge) Disconnect(ctx context.Context, deviceSn string) error {
-	return b.adapter.Disconnect(ctx, deviceSn)
+func (b *gopluginBridge) Disconnect(ctx context.Context) error {
+	return b.adapter.Disconnect(ctx)
 }
 
-func (b *gopluginBridge) ReadData(ctx context.Context, deviceSn string, addresses []string) (map[string][]byte, error) {
-	return b.adapter.ReadData(ctx, deviceSn, addresses)
+func (b *gopluginBridge) IsConnected() bool {
+	return b.adapter.IsConnected()
 }
 
-func (b *gopluginBridge) WriteData(ctx context.Context, deviceSn string, values map[string][]byte) error {
-	return b.adapter.WriteData(ctx, deviceSn, values)
-}
-
-func (b *gopluginBridge) SubscribeData(ctx context.Context, deviceSn string, addresses []string, interval int32) (<-chan DataMessage, error) {
-	ch, err := b.adapter.SubscribeData(ctx, deviceSn, addresses, interval)
+func (b *gopluginBridge) ReadBatch(ctx context.Context, req BatchReadRequest) (*BatchReadResponse, error) {
+	result, err := b.adapter.ReadBatch(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	out := make(chan DataMessage, 100)
-	go func() {
-		defer close(out)
-		for msg := range ch {
-			out <- DataMessage{
-				DeviceSn:  msg.DeviceSn,
-				Values:    msg.Values,
-				Timestamp: msg.Timestamp,
-			}
-		}
-	}()
-	return out, nil
+	resp, ok := result.(*BatchReadResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected ReadBatch result type: %T", result)
+	}
+	return resp, nil
+}
+
+func (b *gopluginBridge) WriteBatch(ctx context.Context, req BatchWriteRequest) error {
+	return b.adapter.WriteBatch(ctx, req)
 }
 
 // LoadPluginsFromDir 扫描插件目录，加载 gRPC 插件
@@ -356,7 +346,7 @@ func (r *registry) LoadPluginsFromDir(dir string) error {
 
 		pluginPath := filepath.Join(absDir, entry.Name())
 
-		// 解析文件名获取 gRPC 地址
+		// 解析文件名获取 gRPC 地址  name@host:port
 		fileName := entry.Name()
 		if strings.HasSuffix(strings.ToLower(fileName), ".exe") {
 			fileName = fileName[:len(fileName)-4]
@@ -387,10 +377,10 @@ func (r *registry) LoadPluginsFromDir(dir string) error {
 			continue
 		}
 
-		gi := adapter.GetInfo()
 		if r.logger != nil {
+			info := adapter.GetInfo()
 			r.logger.Info("gRPC 插件加载成功",
-				zap.String("name", gi.Name),
+				zap.String("name", GetInfoString(info, "name")),
 				zap.String("addr", grpcAddr))
 		}
 
