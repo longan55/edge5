@@ -63,12 +63,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="last_heartbeat" label="最后心跳" width="180" />
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click.stop="handleStart(row)">
               {{ row.status === 1 ? '停用' : '启用' }}
             </el-button>
             <el-button link type="primary" @click.stop="handleEdit(row)">编辑</el-button>
+            <el-button v-if="row._supportDebug" link type="warning" @click.stop="handleDebug(row)">调试</el-button>
             <el-button link type="danger" @click.stop="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -85,6 +86,7 @@
       />
     </el-card>
 
+    <!-- 新增/编辑设备弹窗 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="860px" destroy-on-close>
       <el-form :model="deviceForm" :rules="formRules" ref="formRef" label-width="120px">
         <el-form-item label="设备SN" prop="device_sn">
@@ -195,6 +197,81 @@
         <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 调试弹窗 -->
+    <el-dialog v-model="debugDialogVisible" title="设备调试" width="900px" destroy-on-close @opened="handleDebugDialogOpened">
+      <template v-if="debugLoading">
+        <div style="text-align: center; padding: 40px;">
+          <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+          <p style="margin-top: 12px; color: #999;">加载调试信息...</p>
+        </div>
+      </template>
+      <template v-else-if="!debugInfo.supportDebug">
+        <el-alert title="该设备协议不支持调试功能" type="warning" show-icon :closable="false" />
+      </template>
+      <template v-else>
+        <div class="debug-panel">
+          <div class="debug-controls">
+            <el-button type="primary" @click="addDebugParam">添加参数</el-button>
+            <el-button type="success" @click="handleDebugRead">读取</el-button>
+            <el-button type="warning" @click="handleDebugWrite">写入</el-button>
+            <el-checkbox v-model="isLoopReading">循环读取</el-checkbox>
+            <el-input-number v-model="loopInterval" :min="100" :max="5000" :step="100" style="width: 140px;" />
+            <span>ms</span>
+            <span v-if="lastReadTime" style="margin-left: 10px; color: #666; font-size: 12px;">
+              最新读取: {{ lastReadTime }}
+            </span>
+          </div>
+
+          <el-table :data="debugParams" border class="debug-params-table" style="width: 100%">
+            <el-table-column label="参数名" width="140">
+              <template #default="{ row, $index }">
+                <el-input v-model="row.name" placeholder="参数名" size="small" />
+              </template>
+            </el-table-column>
+
+            <!-- 动态渲染 schema 中定义的字段 -->
+            <el-table-column v-for="field in debugSchema" :key="field.name" :label="field.cName || field.name" :width="field.type === 'int' ? 130 : 140">
+              <template #default="{ row }">
+                <el-input v-if="field.type === 'string'" v-model="row[field.name]" :placeholder="field.cName || field.name" size="small" />
+                <el-input-number v-else-if="field.type === 'int'" v-model="row[field.name]" :min="0" :max="65535" size="small" style="width: 100%" />
+                <el-select v-else-if="field.type === 'select'" v-model="row[field.name]" size="small" style="width: 100%">
+                  <el-option v-for="c in field.choices" :key="c" :label="c" :value="c" />
+                </el-select>
+                <el-input v-else v-model="row[field.name]" :placeholder="field.cName" size="small" />
+              </template>
+            </el-table-column>
+
+            <el-table-column label="读取结果" width="150">
+              <template #default="{ row }">
+                <el-input v-model="row._result" readonly size="small" :placeholder="row._quality || ''" />
+              </template>
+            </el-table-column>
+
+            <el-table-column label="写入值" width="150">
+              <template #default="{ row }">
+                <el-input v-model="row._writeValue" placeholder="写入值" size="small" />
+              </template>
+            </el-table-column>
+
+            <el-table-column label="操作" width="80">
+              <template #default="{ $index }">
+                <el-button type="danger" size="small" @click="removeDebugParam($index)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div v-if="!debugParams.length" style="text-align: center; padding: 20px; color: #999;">
+            暂无参数，点击"添加参数"按钮添加
+          </div>
+        </div>
+      </template>
+
+      <template #footer>
+        <el-button @click="debugDialogVisible = false">关闭</el-button>
+        <el-button v-if="isLoopReading" type="danger" @click="stopLoopReading">停止循环</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -202,6 +279,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import request from '@/utils/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const deviceList = ref([])
@@ -292,6 +370,19 @@ const allBrandOptions = computed(() => {
     }
   }
   return Array.from(map.values())
+})
+
+// 构建协议支持调试的快速查找 Map
+const supportDebugMap = computed(() => {
+  const map = {}
+  for (const dt of deviceOptions.deviceTypes) {
+    for (const b of dt.brands || []) {
+      for (const p of b.protocols || []) {
+        map[p.value] = p.supportDebug
+      }
+    }
+  }
+  return map
 })
 
 const normalizeDeviceType = v => {
@@ -544,7 +635,12 @@ const fetchDevices = async () => {
         brand: filters.brand
       }
     })
-    deviceList.value = res.data?.list || []
+    const list = res.data?.list || []
+    // 标记每个设备是否支持调试
+    for (const device of list) {
+      device._supportDebug = supportDebugMap.value[device.protocol] || false
+    }
+    deviceList.value = list
     pagination.total = res.data?.total || 0
   } catch (error) {
     console.error('获取设备列表失败:', error)
@@ -588,6 +684,163 @@ const handleDelete = async row => {
   }
 }
 
+// ==================== 调试功能 ====================
+const debugDialogVisible = ref(false)
+const debugLoading = ref(false)
+const debugDeviceId = ref(null)
+const debugInfo = reactive({
+  supportDebug: false,
+  protocol: '',
+  readParamsSchema: []
+})
+
+const debugSchema = computed(() => debugInfo.readParamsSchema || [])
+
+const debugParams = ref([])
+const isLoopReading = ref(false)
+const loopInterval = ref(1000)
+const lastReadTime = ref('')
+let loopTimer = null
+
+const handleDebug = async (row) => {
+  debugDeviceId.value = row.id
+  debugDialogVisible.value = true
+}
+
+const handleDebugDialogOpened = async () => {
+  if (!debugDeviceId.value) return
+
+  debugLoading.value = true
+  debugParams.value = []
+  debugInfo.supportDebug = false
+  debugInfo.protocol = ''
+  debugInfo.readParamsSchema = []
+  isLoopReading.value = false
+  lastReadTime.value = ''
+  stopLoop()
+
+  try {
+    const res = await request.get(`/device/${debugDeviceId.value}/debug/info`)
+    if (res.code === 0) {
+      debugInfo.supportDebug = res.data.supportDebug || false
+      debugInfo.protocol = res.data.protocol || ''
+      debugInfo.readParamsSchema = res.data.readParamsSchema || []
+      // 默认添加一行
+      if (debugInfo.supportDebug) {
+        addDebugParam()
+      }
+    }
+  } catch (e) {
+    console.error('获取调试信息失败:', e)
+    ElMessage.error('获取调试信息失败')
+  } finally {
+    debugLoading.value = false
+  }
+}
+
+const addDebugParam = () => {
+  const cmd = { name: '', _result: '', _quality: '', _writeValue: '' }
+  for (const field of debugSchema.value) {
+    cmd[field.name] = field.default ?? (field.type === 'int' ? 0 : '')
+  }
+  debugParams.value.push(cmd)
+}
+
+const removeDebugParam = (index) => {
+  debugParams.value.splice(index, 1)
+}
+
+const handleDebugRead = async () => {
+  if (!debugParams.value.length) {
+    ElMessage.warning('请至少添加一个参数')
+    return
+  }
+
+  // 构造读取参数
+  const readParams = debugParams.value.map(p => {
+    return {
+      name: p.name,
+      address: p.address,
+      length: p.length || p.offset || 1,
+      type: p.parseType || p.type || 'int'
+    }
+  })
+
+  try {
+    const res = await request.post(`/device/${debugDeviceId.value}/debug/read`, { params: readParams })
+    if (res.code === 0) {
+      const results = res.data?.results || []
+      for (let i = 0; i < debugParams.value.length; i++) {
+        const r = results[i]
+        if (r) {
+          debugParams.value[i]._result = r.error || JSON.stringify(r.value)
+          debugParams.value[i]._quality = r.quality
+        }
+      }
+      lastReadTime.value = new Date().toLocaleTimeString()
+
+      // 如果循环读取，继续
+      if (isLoopReading.value) {
+        startLoop()
+      }
+    }
+  } catch (e) {
+    console.error('读取失败:', e)
+    ElMessage.error('读取失败')
+  }
+}
+
+const handleDebugWrite = async () => {
+  if (!debugParams.value.length) {
+    ElMessage.warning('请至少添加一个参数')
+    return
+  }
+
+  const writeParams = []
+  for (const p of debugParams.value) {
+    const writeValue = p._writeValue
+    if (writeValue === undefined || writeValue === null || writeValue === '') {
+      ElMessage.warning(`参数 "${p.name}" 未填写写入值`)
+      return
+    }
+    writeParams.push({
+      name: p.name,
+      address: p.address,
+      length: p.length || p.offset || 1,
+      type: p.parseType || p.type || 'int',
+      writeValue: writeValue
+    })
+  }
+
+  try {
+    await request.post(`/device/${debugDeviceId.value}/debug/write`, { params: writeParams })
+    ElMessage.success('写入成功')
+  } catch (e) {
+    console.error('写入失败:', e)
+    ElMessage.error('写入失败')
+  }
+}
+
+const startLoop = () => {
+  stopLoop()
+  loopTimer = setTimeout(() => {
+    handleDebugRead()
+  }, loopInterval.value)
+}
+
+const stopLoop = () => {
+  if (loopTimer) {
+    clearTimeout(loopTimer)
+    loopTimer = null
+  }
+}
+
+// 监听循环读取状态变化
+const stopLoopReading = () => {
+  isLoopReading.value = false
+  stopLoop()
+}
+
 onMounted(() => {
   fetchDevices()
   fetchDeviceOptions()
@@ -599,5 +852,24 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.debug-panel {
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
+  padding: 15px;
+  background-color: #fafafa;
+}
+
+.debug-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 15px;
+}
+
+.debug-params-table {
+  width: 100%;
 }
 </style>

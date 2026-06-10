@@ -43,6 +43,7 @@ type protocolOption struct {
 	Label        string   `json:"label"`
 	ModelRelated bool     `json:"modelRelated"`
 	Models       []string `json:"models"`
+	SupportDebug bool     `json:"supportDebug"`
 }
 
 type protocolOptionsGroup struct {
@@ -93,11 +94,13 @@ func buildOptions(protocols []protocol.Metadata) *optionsResponse {
 				name := protocol.GetInfoString(p, "name")
 				models := protocol.GetInfoStrings(p, "models")
 
+				schema := protocol.ExtractReadParamsSchema(p)
 				po := protocolOption{
 					Value:        name,
 					Label:        name,
 					ModelRelated: len(models) > 0,
 					Models:       models,
+					SupportDebug: len(schema) > 0,
 				}
 				bo.Protocols = append(bo.Protocols, po)
 

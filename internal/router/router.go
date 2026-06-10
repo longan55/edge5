@@ -99,6 +99,15 @@ func SetupRouter(mode string) *gin.Engine {
 				taskGroup.POST("/:id/stop", taskHandler.StopTask)
 			}
 
+			// 设备调试
+			debugHandler := handler.NewDeviceDebugHandler(global.Logger)
+			deviceDebugGroup := protected.Group("/device")
+			{
+				deviceDebugGroup.GET("/:id/debug/info", debugHandler.GetDeviceDebugInfo)
+				deviceDebugGroup.POST("/:id/debug/read", debugHandler.DebugRead)
+				deviceDebugGroup.POST("/:id/debug/write", debugHandler.DebugWrite)
+			}
+
 			// 获取设备协议的采集参数 Schema（使用固定前缀避免与 :id 冲突）
 			protected.GET("/task/device-read-params-schema/:deviceId", taskHandler.GetReadParamsSchema)
 		}
