@@ -189,6 +189,10 @@ func (a *PluginAdapter) IsConnected() bool {
 	return len(a.states) > 0
 }
 
+func (a *PluginAdapter) IsSupportServer() bool {
+	return false
+}
+
 // ReadBatch 批量读取（直接使用 interface{} 避免循环导入）
 func (a *PluginAdapter) ReadBatch(ctx context.Context, req interface{}) (interface{}, error) {
 	return nil, fmt.Errorf("ReadBatch not implemented for gRPC plugin adapter")

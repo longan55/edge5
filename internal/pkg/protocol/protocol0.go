@@ -12,6 +12,8 @@ type DeviceCommProtocol interface {
 	Connect(ctx context.Context, params Metadata) error
 	Disconnect(ctx context.Context) error
 	IsConnected() bool
+	//是否支持服务端？如果支持会自动启动对外提供mqtt接口，支持ReadBatch和WriteBatch方法
+	IsSupportServer() bool
 
 	// ✅ 批量读
 	ReadBatch(ctx context.Context, req BatchReadRequest) (*BatchReadResponse, error)

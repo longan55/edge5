@@ -296,6 +296,10 @@ func (b *gopluginBridge) IsConnected() bool {
 	return b.adapter.IsConnected()
 }
 
+func (b *gopluginBridge) IsSupportServer() bool {
+	return b.adapter.IsSupportServer()
+}
+
 func (b *gopluginBridge) ReadBatch(ctx context.Context, req BatchReadRequest) (*BatchReadResponse, error) {
 	result, err := b.adapter.ReadBatch(ctx, req)
 	if err != nil {
