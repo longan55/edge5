@@ -33,6 +33,11 @@
           <el-icon><Box /></el-icon>
           <span>设备管理</span>
         </el-menu-item>
+
+        <el-menu-item index="/task/list">
+          <el-icon><Document /></el-icon>
+          <span>采集任务</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

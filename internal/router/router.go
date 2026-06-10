@@ -84,6 +84,23 @@ func SetupRouter(mode string) *gin.Engine {
 				deviceGroup.POST("/:id/start", deviceHandler.Start)
 				deviceGroup.POST("/:id/stop", deviceHandler.Stop)
 			}
+
+			// 采集任务
+			taskHandler := handler.NewTaskHandler(global.Logger)
+			taskGroup := protected.Group("/task")
+			{
+				taskGroup.GET("/list", taskHandler.ListTasks)
+				taskGroup.GET("/:id", taskHandler.GetTask)
+				taskGroup.POST("", taskHandler.CreateTask)
+				taskGroup.PUT("/:id", taskHandler.UpdateTask)
+				taskGroup.DELETE("/:id", taskHandler.DeleteTask)
+				taskGroup.POST("/batch-delete", taskHandler.DeleteTaskBatch)
+				taskGroup.POST("/:id/start", taskHandler.StartTask)
+				taskGroup.POST("/:id/stop", taskHandler.StopTask)
+			}
+
+			// 获取设备协议的采集参数 Schema（使用固定前缀避免与 :id 冲突）
+			protected.GET("/task/device-read-params-schema/:deviceId", taskHandler.GetReadParamsSchema)
 		}
 	}
 

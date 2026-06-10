@@ -143,3 +143,45 @@ func toBool(v any) bool {
 	}
 	return false
 }
+
+// ---------------------------------------------------------------------------
+// 采集参数 Schema（readParamsSchema）
+// ---------------------------------------------------------------------------
+
+// ReadParamSchema 采集参数定义（协议声明可采集的字段及类型）
+type ReadParamSchema struct {
+	Name    string   `json:"name"`
+	CName   string   `json:"cName"`
+	Type    string   `json:"type"`
+	Default string   `json:"default,omitempty"`
+	Choices []string `json:"choices,omitempty"`
+}
+
+// ExtractReadParamsSchema 从 Metadata 中抽取 ReadParamSchema 列表
+// Metadata 中 key="readParamsSchema" 且值类型为 []any，每个元素 map[string]any
+func ExtractReadParamsSchema(m Metadata) []ReadParamSchema {
+	raw := GetInfoSlice(m, "readParamsSchema")
+	if len(raw) == 0 {
+		return nil
+	}
+	result := make([]ReadParamSchema, 0, len(raw))
+	for _, r := range raw {
+		if item, ok := r.(map[string]any); ok {
+			schema := ReadParamSchema{
+				Name:    toString(item["name"]),
+				CName:   toString(item["cName"]),
+				Type:    toString(item["type"]),
+				Default: toString(item["default"]),
+			}
+			if choices, ok := item["choices"].([]any); ok {
+				for _, c := range choices {
+					schema.Choices = append(schema.Choices, toString(c))
+				}
+			} else if choices, ok := item["choices"].([]string); ok {
+				schema.Choices = choices
+			}
+			result = append(result, schema)
+		}
+	}
+	return result
+}

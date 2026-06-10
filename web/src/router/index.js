@@ -40,6 +40,12 @@ const routes = [
         name: 'DeviceList',
         component: () => import('@/views/device/List.vue'),
         meta: { title: '设备列表' }
+      },
+      {
+        path: '/task/list',
+        name: 'TaskList',
+        component: () => import('@/views/task/Task.vue'),
+        meta: { title: '采集任务' }
       }
     ]
   }
