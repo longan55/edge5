@@ -15,6 +15,7 @@ type deviceConn struct {
 	deviceSn string
 	protocol string
 	proto    DeviceCommProtocol
+	handle   DeviceHandle
 	cancel   context.CancelFunc
 	done     chan struct{}
 }
@@ -54,7 +55,8 @@ func (m *Manager) Start(deviceID uint64, deviceSn string, protocolName string, p
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	if err := proto.Connect(ctx, params); err != nil {
+	handle, err := proto.Connect(ctx, params)
+	if err != nil {
 		cancel()
 		return fmt.Errorf("protocol connect failed: %w", err)
 	}
@@ -66,6 +68,7 @@ func (m *Manager) Start(deviceID uint64, deviceSn string, protocolName string, p
 		deviceSn: deviceSn,
 		protocol: protocolName,
 		proto:    proto,
+		handle:   handle,
 		cancel:   cancel,
 		done:     done,
 	}
@@ -80,7 +83,7 @@ func (m *Manager) Start(deviceID uint64, deviceSn string, protocolName string, p
 			m.mu.Lock()
 			delete(m.devices, deviceID)
 			m.mu.Unlock()
-			_ = proto.Disconnect(context.Background())
+			_ = proto.Disconnect(context.Background(), handle)
 		}()
 		// 等待取消信号
 		<-ctx.Done()
@@ -89,7 +92,8 @@ func (m *Manager) Start(deviceID uint64, deviceSn string, protocolName string, p
 	m.logger.Info("设备协议连接已启动",
 		zap.Uint64("device_id", deviceID),
 		zap.String("device_sn", deviceSn),
-		zap.String("protocol", protocolName))
+		zap.String("protocol", protocolName),
+		zap.Uint64("handle", uint64(handle)))
 
 	return nil
 }
@@ -117,7 +121,7 @@ func (m *Manager) Stop(deviceID uint64) error {
 	if conn.proto != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_ = conn.proto.Disconnect(ctx)
+		_ = conn.proto.Disconnect(ctx, conn.handle)
 	}
 
 	m.logger.Info("设备协议连接已停止",

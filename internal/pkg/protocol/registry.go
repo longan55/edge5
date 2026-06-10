@@ -284,15 +284,16 @@ func (b *gopluginBridge) Info() Metadata {
 	return Metadata(info)
 }
 
-func (b *gopluginBridge) Connect(ctx context.Context, params Metadata) error {
-	return b.adapter.Connect(ctx, params)
+func (b *gopluginBridge) Connect(ctx context.Context, params Metadata) (DeviceHandle, error) {
+	// gRPC 插件目前使用 deviceSn 作为连接标识
+	return DeviceHandle(0), b.adapter.Connect(ctx, params)
 }
 
-func (b *gopluginBridge) Disconnect(ctx context.Context) error {
+func (b *gopluginBridge) Disconnect(ctx context.Context, handle DeviceHandle) error {
 	return b.adapter.Disconnect(ctx)
 }
 
-func (b *gopluginBridge) IsConnected() bool {
+func (b *gopluginBridge) IsConnected(handle DeviceHandle) bool {
 	return b.adapter.IsConnected()
 }
 
@@ -300,7 +301,7 @@ func (b *gopluginBridge) IsSupportServer() bool {
 	return b.adapter.IsSupportServer()
 }
 
-func (b *gopluginBridge) ReadBatch(ctx context.Context, req BatchReadRequest) (*BatchReadResponse, error) {
+func (b *gopluginBridge) ReadBatch(ctx context.Context, handle DeviceHandle, req BatchReadRequest) (*BatchReadResponse, error) {
 	result, err := b.adapter.ReadBatch(ctx, req)
 	if err != nil {
 		return nil, err
@@ -312,7 +313,7 @@ func (b *gopluginBridge) ReadBatch(ctx context.Context, req BatchReadRequest) (*
 	return resp, nil
 }
 
-func (b *gopluginBridge) WriteBatch(ctx context.Context, req BatchWriteRequest) error {
+func (b *gopluginBridge) WriteBatch(ctx context.Context, handle DeviceHandle, req BatchWriteRequest) error {
 	return b.adapter.WriteBatch(ctx, req)
 }
 

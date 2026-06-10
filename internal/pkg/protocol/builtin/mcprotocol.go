@@ -73,17 +73,18 @@ func (m *McService) Info() protocol.Metadata {
 
 // IsSupportServer 返回是否支持服务端模式
 func (m *McService) IsSupportServer() bool {
-	return false
+	return true
 }
 
-// IsConnected 返回是否已连接
-func (m *McService) IsConnected() bool {
+// IsConnected 返回指定句柄的设备是否已连接
+func (m *McService) IsConnected(handle protocol.DeviceHandle) bool {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	return m.connected && m.Clients[m.deviceID] != nil
+	client, ok := m.Clients[uint(handle)]
+	return ok && client != nil
 }
 
-// Connect 根据 Metadata 中的连接参数连接到 PLC
+// Connect 根据 Metadata 中的连接参数连接到 PLC，返回设备句柄
 // 参数:
 //   - ip: string
 //   - port: int (默认 6000)
@@ -91,20 +92,20 @@ func (m *McService) IsConnected() bool {
 //   - pcNum: int (默认 0xFF)
 //   - unitIONum: int (默认 0x03FF)
 //   - unitStationNum: int (默认 0x00)
-func (m *McService) Connect(ctx context.Context, params protocol.Metadata) error {
+func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (protocol.DeviceHandle, error) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
 	deviceID := uint(getInt(params, "deviceID"))
 	if deviceID == 0 {
-		return fmt.Errorf("缺少 deviceID 参数")
+		return protocol.InvalidHandle, fmt.Errorf("缺少 deviceID 参数")
 	}
 
 	if _, ok := m.Clients[deviceID]; ok {
 		m.connected = true
 		m.deviceID = deviceID
 		m.connection = params
-		return nil
+		return protocol.DeviceHandle(deviceID), nil
 	}
 
 	ip := getString(params, "ip")
@@ -131,16 +132,16 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) error
 	}
 
 	if ip == "" {
-		return fmt.Errorf("缺少 IP 地址参数")
+		return protocol.InvalidHandle, fmt.Errorf("缺少 IP 地址参数")
 	}
 
 	station := mcp.NewStation(networkNumber, pcNum, unitIONum, unitStationNum)
 	client, err := mcp.New3EAliveClient(ip, port, station)
 	if err != nil {
-		return fmt.Errorf("创建 MC 客户端失败: %w", err)
+		return protocol.InvalidHandle, fmt.Errorf("创建 MC 客户端失败: %w", err)
 	}
 	if err = client.Connect(); err != nil {
-		return fmt.Errorf("连接 MC 客户端失败: %w", err)
+		return protocol.InvalidHandle, fmt.Errorf("连接 MC 客户端失败: %w", err)
 	}
 
 	m.Clients[deviceID] = client
@@ -155,44 +156,45 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) error
 			zap.Int("port", port),
 		)
 	}
-	return nil
+	return protocol.DeviceHandle(deviceID), nil
 }
 
-// Disconnect 断开设备连接
-func (m *McService) Disconnect(ctx context.Context) error {
+// Disconnect 断开指定句柄的设备连接
+func (m *McService) Disconnect(ctx context.Context, handle protocol.DeviceHandle) error {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	if client, ok := m.Clients[m.deviceID]; ok {
+	devID := uint(handle)
+	if devID == 0 {
+		devID = m.deviceID
+	}
+
+	if client, ok := m.Clients[devID]; ok {
 		if err := client.Close(); err != nil {
 			return fmt.Errorf("关闭 MC 客户端失败: %w", err)
 		}
-		delete(m.Clients, m.deviceID)
+		delete(m.Clients, devID)
 	}
-	m.connected = false
-	m.deviceID = 0
-	m.connection = nil
+	if devID == m.deviceID {
+		m.connected = false
+		m.deviceID = 0
+		m.connection = nil
+	}
 	return nil
 }
 
 // ReadBatch 批量读取 PLC 寄存器数据
-func (m *McService) ReadBatch(ctx context.Context, req protocol.BatchReadRequest) (*protocol.BatchReadResponse, error) {
+func (m *McService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle, req protocol.BatchReadRequest) (*protocol.BatchReadResponse, error) {
 	m.lock.Lock()
-	client, ok := m.Clients[m.deviceID]
+	devID := uint(handle)
+	if devID == 0 {
+		devID = m.deviceID
+	}
+	client, ok := m.Clients[devID]
 	m.lock.Unlock()
 
 	if !ok {
-		// 尝试从连接池中根据 params 重新连接
-		if m.connection != nil {
-			if err := m.Connect(ctx, m.connection); err != nil {
-				return nil, fmt.Errorf("设备未连接且重连失败: %w", err)
-			}
-			m.lock.Lock()
-			client = m.Clients[m.deviceID]
-			m.lock.Unlock()
-		} else {
-			return nil, fmt.Errorf("设备 %d 未连接", m.deviceID)
-		}
+		return nil, fmt.Errorf("句柄 %d 未连接", handle)
 	}
 
 	results := make([]protocol.BatchReadResult, 0, len(req.Points))
@@ -257,13 +259,17 @@ func (m *McService) readPoint(client mcp.Client, pt protocol.Point) protocol.Bat
 }
 
 // WriteBatch 批量写入 PLC 寄存器数据
-func (m *McService) WriteBatch(ctx context.Context, req protocol.BatchWriteRequest) error {
+func (m *McService) WriteBatch(ctx context.Context, handle protocol.DeviceHandle, req protocol.BatchWriteRequest) error {
 	m.lock.Lock()
-	client, ok := m.Clients[m.deviceID]
+	devID := uint(handle)
+	if devID == 0 {
+		devID = m.deviceID
+	}
+	client, ok := m.Clients[devID]
 	m.lock.Unlock()
 
 	if !ok {
-		return fmt.Errorf("设备 %d 未连接", m.deviceID)
+		return fmt.Errorf("句柄 %d 未连接", handle)
 	}
 
 	for _, item := range req.Items {
@@ -892,7 +898,7 @@ func (m *McService) ReadParams(ctx context.Context, params protocol.Metadata) (p
 	}
 
 	req := protocol.BatchReadRequest{Points: points}
-	resp, err := m.ReadBatch(ctx, req)
+	resp, err := m.ReadBatch(ctx, protocol.DeviceHandle(m.deviceID), req)
 	if err != nil {
 		return nil, err
 	}

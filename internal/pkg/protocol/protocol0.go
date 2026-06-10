@@ -6,20 +6,29 @@ import "context"
 // 使用 map[string]any 而非命名类型，确保跨包兼容性（不产生类型不匹配问题）
 type Metadata = map[string]any
 
+// DeviceHandle 设备句柄，Connect 返回，用于后续所有操作标识具体设备
+type DeviceHandle uint64
+
+// InvalidHandle 表示无效的设备句柄
+const InvalidHandle DeviceHandle = 0
+
 type DeviceCommProtocol interface {
 	Info() Metadata
 
-	Connect(ctx context.Context, params Metadata) error
-	Disconnect(ctx context.Context) error
-	IsConnected() bool
-	//是否支持服务端？如果支持会自动启动对外提供mqtt接口，支持ReadBatch和WriteBatch方法
+	// Connect 连接设备，返回设备句柄供后续操作使用
+	Connect(ctx context.Context, params Metadata) (DeviceHandle, error)
+	// Disconnect 断开指定句柄的设备连接
+	Disconnect(ctx context.Context, handle DeviceHandle) error
+	// IsConnected 检查指定句柄的设备是否已连接
+	IsConnected(handle DeviceHandle) bool
+	// IsSupportServer 是否支持服务端？如果支持会自动启动对外提供mqtt接口，支持ReadBatch和WriteBatch方法
 	IsSupportServer() bool
 
-	// ✅ 批量读
-	ReadBatch(ctx context.Context, req BatchReadRequest) (*BatchReadResponse, error)
+	// ReadBatch 批量读（按句柄区分设备）
+	ReadBatch(ctx context.Context, handle DeviceHandle, req BatchReadRequest) (*BatchReadResponse, error)
 
-	// ✅ 批量写
-	WriteBatch(ctx context.Context, req BatchWriteRequest) error
+	// WriteBatch 批量写（按句柄区分设备）
+	WriteBatch(ctx context.Context, handle DeviceHandle, req BatchWriteRequest) error
 }
 
 type Point struct {
