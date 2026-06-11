@@ -135,16 +135,44 @@ func (h *DeviceDebugHandler) GetDeviceDebugInfo(c *gin.Context) {
 		return
 	}
 
+	h.logger.Info("GetDeviceDebugInfo",
+		zap.Uint64("deviceID", deviceID),
+		zap.String("protocolName", protocolName),
+		zap.String("deviceProtocolField", device.Protocol))
+
 	reg := protocol.DefaultRegistry()
 	infos := reg.List()
 
+	h.logger.Info("注册表中的协议数量", zap.Int("count", len(infos)))
+	for i, info := range infos {
+		infoName := protocol.GetInfoString(info, "name")
+		infoAlias := protocol.GetInfoAlias(info)
+		infoSupportDebug := protocol.GetInfoBool(info, "supportDebug", false)
+		h.logger.Info("协议信息",
+			zap.Int("index", i),
+			zap.String("name", infoName),
+			zap.String("alias", infoAlias),
+			zap.Bool("supportDebug", infoSupportDebug),
+			zap.Bool("matchByName", infoName == protocolName),
+			zap.Bool("matchByAlias", infoAlias == protocolName))
+	}
+
 	var supportDebug bool
 	var schema []protocol.ReadParamSchema
+	var foundProtocolName string
 
 	for _, info := range infos {
-		if protocol.GetInfoString(info, "name") == protocolName {
+		// 使用 MatchProtocolName 支持别名匹配
+		if protocol.MatchProtocolName(info, protocolName) {
+			foundProtocolName = protocol.GetInfoString(info, "name")
 			schema = protocol.ExtractReadParamsSchema(info)
-			supportDebug = len(schema) > 0
+			// 使用协议定义中的 supportDebug 字段
+			supportDebug = protocol.GetInfoBool(info, "supportDebug", false)
+			h.logger.Info("找到匹配的协议",
+				zap.String("foundName", foundProtocolName),
+				zap.String("alias", protocol.GetInfoAlias(info)),
+				zap.Bool("supportDebug", supportDebug),
+				zap.Any("schema", schema))
 			break
 		}
 	}
@@ -156,6 +184,12 @@ func (h *DeviceDebugHandler) GetDeviceDebugInfo(c *gin.Context) {
 			{Name: "type", CName: "解析类型", Type: "select", Choices: []string{"bool", "short", "ushort", "int", "uint", "long", "ulong", "float", "double", "string"}},
 		}
 	}
+
+	h.logger.Info("返回调试信息",
+		zap.Uint64("deviceID", deviceID),
+		zap.String("protocol", protocolName),
+		zap.Bool("supportDebug", supportDebug),
+		zap.Int("schemaCount", len(schema)))
 
 	response.Success(c, gin.H{
 		"deviceId":         deviceID,

@@ -46,6 +46,7 @@ func NewMcService() *McService {
 func (m *McService) Info() protocol.Metadata {
 	return protocol.Metadata{
 		"name":          "MelsecMC",
+		"alias":        "MC-3E", // 前端使用的别名
 		"version":       "1.0.0",
 		"description":   "三菱 PLC MC 协议（3E 帧，Q 系列）",
 		"group":         "builtin",
@@ -53,7 +54,8 @@ func (m *McService) Info() protocol.Metadata {
 		"deviceType":    "PLC",
 		"brand":         "Mitsubishi",
 		"cName":         "三菱",
-		"supportServer": false,
+		"supportServer": true,
+		"supportDebug":  true,
 		"models":        []string{"Q系列"},
 		"connectionParams": []any{
 			protocol.Metadata{"name": "ip", "cName": "IP 地址", "type": "string", "required": true, "default": ""},

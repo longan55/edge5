@@ -7,6 +7,7 @@ package protocol
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,44 @@ func GetInfoSlice(m Metadata, key string) []any {
 	}
 	v, _ := m[key].([]any)
 	return v
+}
+
+// GetInfoBool 从 Metadata 中安全读取布尔字段
+func GetInfoBool(m Metadata, key string, defaultValue bool) bool {
+	if m == nil {
+		return defaultValue
+	}
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	return defaultValue
+}
+
+// GetInfoAlias 从 Metadata 中获取协议别名
+func GetInfoAlias(m Metadata) string {
+	if m == nil {
+		return ""
+	}
+	v, _ := m["alias"].(string)
+	return v
+}
+
+// MatchProtocolName 检查给定的协议名称是否匹配（支持别名）
+func MatchProtocolName(info Metadata, protocolName string) bool {
+	if info == nil || protocolName == "" {
+		return false
+	}
+	name := GetInfoString(info, "name")
+	alias := GetInfoAlias(info)
+	// 精确匹配名称或别名
+	if name == protocolName || alias == protocolName {
+		return true
+	}
+	// 大小写不敏感匹配
+	if strings.EqualFold(name, protocolName) || strings.EqualFold(alias, protocolName) {
+		return true
+	}
+	return false
 }
 
 // ConnectionParam 连接参数定义（用于 Informational 目的 — 前端表单生成）

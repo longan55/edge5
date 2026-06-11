@@ -39,22 +39,15 @@
 
       <el-table :data="deviceList" v-loading="loading" @row-click="handleRowClick">
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="device_sn" label="设备SN" />
-        <el-table-column prop="device_name" label="设备名称" />
+        <el-table-column prop="device_sn" label="设备SN" width="160" />
+        <el-table-column prop="device_name" label="设备名称" width="200" />
         <el-table-column prop="device_type" label="类型" width="100">
           <template #default="{ row }">
             <el-tag>{{ row.device_type?.toUpperCase() }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="brand" label="品牌" width="100" />
-        <el-table-column prop="protocol" label="协议" width="100" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'info'">
-              {{ row.status === 1 ? '启用' : '禁用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
+        <el-table-column prop="protocol" label="协议" width="120" />
         <el-table-column label="在线状态" width="120">
           <template #default="{ row }">
             <el-tag :type="row.online ? 'success' : 'danger'" size="small">
@@ -62,14 +55,11 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="last_heartbeat" label="最后心跳" width="180" />
-        <el-table-column label="操作" width="360" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click.stop="handleStart(row)">
-              {{ row.status === 1 ? '停用' : '启用' }}
-            </el-button>
+            <el-button link type="primary" @click.stop="handleDetail(row)">详情</el-button>
             <el-button link type="primary" @click.stop="handleEdit(row)">编辑</el-button>
-            <el-button v-if="row._supportDebug" link type="warning" @click.stop="handleDebug(row)">调试</el-button>
+            <el-button link type="warning" @click.stop="handleDebug(row)">调试</el-button>
             <el-button link type="danger" @click.stop="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -198,6 +188,41 @@
       </template>
     </el-dialog>
 
+    <!-- 详情弹窗 -->
+    <el-dialog v-model="detailDialogVisible" title="设备详情" width="600px" destroy-on-close>
+      <el-form :model="detailForm" label-width="120px">
+        <el-form-item label="设备SN">
+          <el-input v-model="detailForm.device_sn" readonly />
+        </el-form-item>
+        <el-form-item label="设备名称">
+          <el-input v-model="detailForm.device_name" readonly />
+        </el-form-item>
+        <el-form-item label="设备类型">
+          <el-input v-model="detailForm.device_type" readonly />
+        </el-form-item>
+        <el-form-item label="品牌">
+          <el-input v-model="detailForm.brand" readonly />
+        </el-form-item>
+        <el-form-item label="协议">
+          <el-input v-model="detailForm.protocol" readonly />
+        </el-form-item>
+        <el-form-item label="型号">
+          <el-input v-model="detailForm.model" readonly />
+        </el-form-item>
+        <el-form-item label="在线状态">
+          <el-tag :type="detailForm.online ? 'success' : 'danger'">
+            {{ detailForm.online ? '在线' : '离线' }}
+          </el-tag>
+        </el-form-item>
+        <el-form-item label="连接参数">
+          <pre style="max-height: 200px; overflow-y: auto; background: #f5f5f5; padding: 10px; border-radius: 4px;">{{ detailForm.config }}</pre>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="detailDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 调试弹窗 -->
     <el-dialog v-model="debugDialogVisible" title="设备调试" width="900px" destroy-on-close @opened="handleDebugDialogOpened">
       <template v-if="debugLoading">
@@ -210,59 +235,68 @@
         <el-alert title="该设备协议不支持调试功能" type="warning" show-icon :closable="false" />
       </template>
       <template v-else>
-        <div class="debug-panel">
-          <div class="debug-controls">
+        <div class="read-panel">
+          <h4>读取配置</h4>
+          <div class="read-controls">
             <el-button type="primary" @click="addDebugParam">添加参数</el-button>
             <el-button type="success" @click="handleDebugRead">读取</el-button>
-            <el-button type="warning" @click="handleDebugWrite">写入</el-button>
             <el-checkbox v-model="isLoopReading">循环读取</el-checkbox>
-            <el-input-number v-model="loopInterval" :min="100" :max="5000" :step="100" style="width: 140px;" />
+            <el-input-number v-model="loopInterval" :min="100" :max="5000" :step="100" />
             <span>ms</span>
             <span v-if="lastReadTime" style="margin-left: 10px; color: #666; font-size: 12px;">
               最新读取: {{ lastReadTime }}
             </span>
+            <el-button type="warning" @click="handleDebugWrite">写入</el-button>
           </div>
 
-          <el-table :data="debugParams" border class="debug-params-table" style="width: 100%">
-            <el-table-column label="参数名" width="140">
-              <template #default="{ row, $index }">
-                <el-input v-model="row.name" placeholder="参数名" size="small" />
-              </template>
-            </el-table-column>
-
-            <!-- 动态渲染 schema 中定义的字段 -->
-            <el-table-column v-for="field in debugSchema" :key="field.name" :label="field.cName || field.name" :width="field.type === 'int' ? 130 : 140">
-              <template #default="{ row }">
-                <el-input v-if="field.type === 'string'" v-model="row[field.name]" :placeholder="field.cName || field.name" size="small" />
-                <el-input-number v-else-if="field.type === 'int'" v-model="row[field.name]" :min="0" :max="65535" size="small" style="width: 100%" />
-                <el-select v-else-if="field.type === 'select'" v-model="row[field.name]" size="small" style="width: 100%">
-                  <el-option v-for="c in field.choices" :key="c" :label="c" :value="c" />
-                </el-select>
-                <el-input v-else v-model="row[field.name]" :placeholder="field.cName" size="small" />
-              </template>
-            </el-table-column>
-
-            <el-table-column label="读取结果" width="150">
-              <template #default="{ row }">
-                <el-input v-model="row._result" readonly size="small" :placeholder="row._quality || ''" />
-              </template>
-            </el-table-column>
-
-            <el-table-column label="写入值" width="150">
-              <template #default="{ row }">
-                <el-input v-model="row._writeValue" placeholder="写入值" size="small" />
-              </template>
-            </el-table-column>
-
-            <el-table-column label="操作" width="80">
-              <template #default="{ $index }">
-                <el-button type="danger" size="small" @click="removeDebugParam($index)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-
-          <div v-if="!debugParams.length" style="text-align: center; padding: 20px; color: #999;">
-            暂无参数，点击"添加参数"按钮添加
+          <div class="params-table-wrapper">
+            <el-table :data="debugParams" border class="params-table" style="width: 100%">
+              <!-- 固定列：参数名 -->
+              <el-table-column label="参数名" prop="name" width="120">
+                <template #default="{ row }">
+                  <el-input v-model="row.name" placeholder="参数名" />
+                </template>
+              </el-table-column>
+              <!-- 动态列：根据采集参数生成 -->
+              <el-table-column
+                v-for="col in debugSchemaColumns"
+                :key="col.name"
+                :label="col.cName"
+                :prop="col.name"
+                :width="col.width"
+              >
+                <template #default="{ row }">
+                  <!-- 字符串类型 -->
+                  <el-input v-if="col.type === 'string'" v-model="row[col.name]" :placeholder="col.cName" />
+                  <!-- 整数类型 -->
+                  <el-input-number v-else-if="col.type === 'int'" v-model="row[col.name]" :min="0" :max="10000" />
+                  <!-- 选择类型 -->
+                  <el-select v-else-if="col.type === 'select'" v-model="row[col.name]">
+                    <el-option v-for="opt in col.choices" :key="opt" :label="opt" :value="opt" />
+                  </el-select>
+                  <!-- 其他类型 -->
+                  <el-input v-else v-model="row[col.name]" :placeholder="col.cName" />
+                </template>
+              </el-table-column>
+              <!-- 固定列：读取结果 -->
+              <el-table-column label="读取结果" prop="_result" width="150">
+                <template #default="{ row }">
+                  <el-input v-model="row._result" readonly />
+                </template>
+              </el-table-column>
+              <!-- 固定列：写入值 -->
+              <el-table-column label="写入值" prop="_writeValue" width="150">
+                <template #default="{ row }">
+                  <el-input v-model="row._writeValue" />
+                </template>
+              </el-table-column>
+              <!-- 固定列：操作 -->
+              <el-table-column label="操作" width="80">
+                <template #default="{ $index }">
+                  <el-button type="danger" size="small" @click="removeDebugParam($index)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
           </div>
         </div>
       </template>
@@ -284,7 +318,19 @@ import { Loading } from '@element-plus/icons-vue'
 const loading = ref(false)
 const deviceList = ref([])
 const dialogVisible = ref(false)
+const detailDialogVisible = ref(false)
 const formRef = ref(null)
+
+const detailForm = reactive({
+  device_sn: '',
+  device_name: '',
+  device_type: '',
+  brand: '',
+  protocol: '',
+  model: '',
+  online: false,
+  config: ''
+})
 
 const deviceOptions = reactive({
   deviceTypes: [],
@@ -559,6 +605,23 @@ const handleAdd = async () => {
   dialogVisible.value = true
 }
 
+const handleDetail = (row) => {
+  detailForm.device_sn = row.device_sn || ''
+  detailForm.device_name = row.device_name || ''
+  detailForm.device_type = (row.device_type || '').toUpperCase()
+  detailForm.brand = row.brand || ''
+  detailForm.protocol = row.protocol || ''
+  detailForm.model = row.model || ''
+  detailForm.online = row.online || false
+  try {
+    const config = JSON.parse(row.config || '{}')
+    detailForm.config = JSON.stringify(config, null, 2)
+  } catch {
+    detailForm.config = row.config || ''
+  }
+  detailDialogVisible.value = true
+}
+
 const handleEdit = async row => {
   deviceForm.id = row.id
   deviceForm.device_sn = row.device_sn
@@ -696,14 +759,44 @@ const debugInfo = reactive({
 
 const debugSchema = computed(() => debugInfo.readParamsSchema || [])
 
+// 根据采集参数生成动态表头配置
+const debugSchemaColumns = computed(() => {
+  const schema = debugSchema.value || []
+  const defaultColumns = [
+    { name: 'address', cName: '地址', type: 'string', width: 120 },
+    { name: 'offset', cName: '偏移', type: 'int', width: 100 },
+    { name: 'parseType', cName: '类型', type: 'select', width: 120, choices: ['bool', 'short', 'ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'string'] }
+  ]
+  if (schema.length === 0) {
+    return defaultColumns
+  }
+  // 根据采集参数生成表头
+  return schema.map(param => {
+    const col = {
+      name: param.name || param.fieldName || '',
+      cName: param.cName || param.name || '',
+      type: param.type || 'string',
+      width: 120
+    }
+    // 如果有 choices 选项
+    if (param.choices && Array.isArray(param.choices)) {
+      col.choices = param.choices
+    }
+    return col
+  })
+})
+
 const debugParams = ref([])
 const isLoopReading = ref(false)
 const loopInterval = ref(1000)
 const lastReadTime = ref('')
+const paramTypes = ['int', 'float', 'string', 'bool']
 let loopTimer = null
 
 const handleDebug = async (row) => {
   debugDeviceId.value = row.id
+  // 直接使用设备列表中已有的支持调试标记
+  debugInfo.supportDebug = row._supportDebug || true
   debugDialogVisible.value = true
 }
 
@@ -712,7 +805,6 @@ const handleDebugDialogOpened = async () => {
 
   debugLoading.value = true
   debugParams.value = []
-  debugInfo.supportDebug = false
   debugInfo.protocol = ''
   debugInfo.readParamsSchema = []
   isLoopReading.value = false
@@ -722,28 +814,48 @@ const handleDebugDialogOpened = async () => {
   try {
     const res = await request.get(`/device/${debugDeviceId.value}/debug/info`)
     if (res.code === 0) {
-      debugInfo.supportDebug = res.data.supportDebug || false
+      // 使用后端返回的 supportDebug，如果为空则默认支持
+      if (res.data.supportDebug !== undefined) {
+        debugInfo.supportDebug = res.data.supportDebug
+      }
       debugInfo.protocol = res.data.protocol || ''
-      debugInfo.readParamsSchema = res.data.readParamsSchema || []
-      // 默认添加一行
+      debugInfo.readParamsSchema = res.data.readParamsSchema || res.data.paramsSchema || []
+      // 默认添加一行空参数
       if (debugInfo.supportDebug) {
         addDebugParam()
       }
     }
   } catch (e) {
     console.error('获取调试信息失败:', e)
-    ElMessage.error('获取调试信息失败')
+    // 如果API调用失败，仍然允许调试（使用默认参数）
+    debugInfo.supportDebug = true
+    ElMessage.warning('获取调试信息失败，使用默认参数')
+    addDebugParam()
   } finally {
     debugLoading.value = false
   }
 }
 
 const addDebugParam = () => {
-  const cmd = { name: '', _result: '', _quality: '', _writeValue: '' }
-  for (const field of debugSchema.value) {
-    cmd[field.name] = field.default ?? (field.type === 'int' ? 0 : '')
+  // 添加一行空行，参数名等字段都是空的，让用户手动输入
+  const newRow = {
+    name: '',  // 参数名手动输入
+    _result: '',
+    _writeValue: ''
   }
-  debugParams.value.push(cmd)
+  // 根据动态表头配置初始化空值
+  debugSchemaColumns.value.forEach(col => {
+    if (col.name && col.name !== 'name') {
+      if (col.type === 'select' && col.choices && col.choices.length > 0) {
+        newRow[col.name] = col.choices[0] // 下拉框设置默认值
+      } else if (col.type === 'int') {
+        newRow[col.name] = 0
+      } else {
+        newRow[col.name] = ''
+      }
+    }
+  })
+  debugParams.value.push(newRow)
 }
 
 const removeDebugParam = (index) => {
@@ -756,14 +868,16 @@ const handleDebugRead = async () => {
     return
   }
 
-  // 构造读取参数
+  // 构造读取参数 - 根据动态表头配置获取参数
   const readParams = debugParams.value.map(p => {
-    return {
-      name: p.name,
-      address: p.address,
-      length: p.length || p.offset || 1,
-      type: p.parseType || p.type || 'int'
-    }
+    const param = { name: p.name }
+    // 获取所有动态列的值
+    debugSchemaColumns.value.forEach(col => {
+      if (col.name && col.name !== 'name' && p[col.name] !== undefined) {
+        param[col.name] = p[col.name]
+      }
+    })
+    return param
   })
 
   try {
@@ -803,13 +917,17 @@ const handleDebugWrite = async () => {
       ElMessage.warning(`参数 "${p.name}" 未填写写入值`)
       return
     }
-    writeParams.push({
+    // 根据动态表头配置获取参数
+    const param = {
       name: p.name,
-      address: p.address,
-      length: p.length || p.offset || 1,
-      type: p.parseType || p.type || 'int',
       writeValue: writeValue
+    }
+    debugSchemaColumns.value.forEach(col => {
+      if (col.name && col.name !== 'name' && p[col.name] !== undefined) {
+        param[col.name] = p[col.name]
+      }
     })
+    writeParams.push(param)
   }
 
   try {
@@ -854,14 +972,14 @@ onMounted(() => {
   align-items: center;
 }
 
-.debug-panel {
+.read-panel {
   border: 1px solid #e4e7ed;
   border-radius: 4px;
   padding: 15px;
   background-color: #fafafa;
 }
 
-.debug-controls {
+.read-controls {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -869,7 +987,11 @@ onMounted(() => {
   margin-bottom: 15px;
 }
 
-.debug-params-table {
+.params-table-wrapper {
+  margin-top: 10px;
+}
+
+.params-table {
   width: 100%;
 }
 </style>
