@@ -19,7 +19,7 @@ import (
 
 func init() {
 	// 注册内置协议 MelsecMC
-	if err := Register(&McService{}); err != nil {
+	if err := Register(NewMcService()); err != nil {
 		panic(fmt.Sprintf("注册 MelsecMC 协议失败: %v", err))
 	}
 }
@@ -46,7 +46,7 @@ func NewMcService() *McService {
 func (m *McService) Info() protocol.Metadata {
 	return protocol.Metadata{
 		"name":          "MelsecMC",
-		"alias":        "MC-3E", // 前端使用的别名
+		"alias":         "MC-3E", // 前端使用的别名
 		"version":       "1.0.0",
 		"description":   "三菱 PLC MC 协议（3E 帧，Q 系列）",
 		"group":         "builtin",
@@ -60,14 +60,14 @@ func (m *McService) Info() protocol.Metadata {
 		"connectionParams": []any{
 			protocol.Metadata{"name": "ip", "cName": "IP 地址", "type": "string", "required": true, "default": ""},
 			protocol.Metadata{"name": "port", "cName": "端口", "type": "int", "required": true, "default": "6000"},
-			protocol.Metadata{"name": "networkNumber", "cName": "网络编号", "type": "string", "required": false, "default": "0"},
+			protocol.Metadata{"name": "networkNumber", "cName": "网络编号", "type": "string", "required": false, "default": "00"},
 			protocol.Metadata{"name": "pcNum", "cName": "PC 编号", "type": "string", "required": false, "default": "FF"},
-			protocol.Metadata{"name": "unitIONum", "cName": "单元 I/O 编号", "type": "string", "required": false, "default": "03FF"},
+			protocol.Metadata{"name": "unitIONum", "cName": "单元 I/O 编号", "type": "string", "required": false, "default": "FF03"},
 			protocol.Metadata{"name": "unitStationNum", "cName": "单元站号", "type": "string", "required": false, "default": "00"},
 		},
 		"readParamsSchema": []any{
-			protocol.Metadata{"name": "address", "cName": "地址", "type": "string", "required": true, "default": ""},
-			protocol.Metadata{"name": "offset", "cName": "偏移量", "type": "int", "required": false, "default": "0"},
+			protocol.Metadata{"name": "address", "cName": "地址", "type": "string", "required": true, "default": "X0"},
+			protocol.Metadata{"name": "offset", "cName": "偏移量", "type": "int", "required": false, "default": "1"},
 			protocol.Metadata{"name": "parseType", "cName": "解析类型", "type": "select", "required": true, "default": "int", "choices": []string{"bool", "short", "ushort", "int", "uint", "long", "ulong", "float", "double", "string"}},
 		},
 	}
@@ -98,6 +98,10 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (prot
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
+	if m.Clients == nil {
+		m.Clients = make(map[uint]mcp.Client)
+	}
+
 	deviceID := uint(getInt(params, "deviceID"))
 	if deviceID == 0 {
 		return protocol.InvalidHandle, fmt.Errorf("缺少 deviceID 参数")
@@ -121,13 +125,13 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (prot
 	unitStationNum := getString(params, "unitStationNum")
 
 	if networkNumber == "" {
-		networkNumber = "0"
+		networkNumber = "00"
 	}
 	if pcNum == "" {
 		pcNum = "FF"
 	}
 	if unitIONum == "" {
-		unitIONum = "03FF"
+		unitIONum = "FF03"
 	}
 	if unitStationNum == "" {
 		unitStationNum = "00"
@@ -321,16 +325,20 @@ func (m *McService) writePoint(client mcp.Client, item protocol.BatchWriteItem) 
 // ReadMelsec 核心读取方法
 // ---------------------------------------------------------------------------
 
-func ReadMelsec(client mcp.Client, address string, length int) (string, []byte, error) {
+// ReadMelsec 读取 PLC 寄存器数据
+// address: 设备地址，例如 "D10" → deviceName="D", offset=10
+// numPoints: 读取的点数（字数），前端统一用 length 表示 numPoints
+func ReadMelsec(client mcp.Client, address string, numPoints int) (string, []byte, error) {
 	deviceName, offset, err := ParseAddress(address)
 	if err != nil {
 		return "", nil, fmt.Errorf("地址解析失败: %v", err)
 	}
 
-	log.Printf("ReadMelsec - Device: %s, Offset: %d, Length: %d", deviceName, offset, length)
-	read, err := client.Read(deviceName, offset, int64(length))
+	log.Printf("ReadMelsec - Device: %s, Offset: %d, NumPoints: %d", deviceName, offset, numPoints)
+	read, err := client.Read(deviceName, offset, int64(numPoints))
 	if err != nil {
-		return "", nil, fmt.Errorf("读取失败: %v", err)
+		log.Printf("ReadMelsec ERROR: %v", err)
+		return "", nil, fmt.Errorf("读取失败: %w", err)
 	}
 	registerBinary, err := mcp.NewParser().Do(read)
 	if err != nil {
@@ -343,12 +351,16 @@ func ReadMelsec(client mcp.Client, address string, length int) (string, []byte, 
 // WriteMelsec 核心写入方法
 // ---------------------------------------------------------------------------
 
-func WriteMelsec(client mcp.Client, address string, length int, value []byte) ([]byte, error) {
+// WriteMelsec 写入 PLC 寄存器数据
+// address: 设备地址，例如 "D10" → deviceName="D", offset=10
+// numPoints: 写入的点数（字数），前端统一用 length 表示 numPoints
+// value: 要写入的字节数据
+func WriteMelsec(client mcp.Client, address string, numPoints int, value []byte) ([]byte, error) {
 	deviceName, offset, err := ParseAddress(address)
 	if err != nil {
 		return nil, fmt.Errorf("无效的地址格式: %v", err)
 	}
-	resp, err := client.Write(deviceName, offset, int64(length), value)
+	resp, err := client.Write(deviceName, offset, int64(numPoints), value)
 	if err != nil {
 		return nil, fmt.Errorf("写入失败: %v", err)
 	}

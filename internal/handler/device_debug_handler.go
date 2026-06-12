@@ -36,7 +36,7 @@ type DebugReadParam struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
 	Length  int    `json:"length"`
-	Type    string `json:"type"`
+	Type    string `json:"parseType"`
 }
 
 // DebugWriteRequest 调试写入请求
