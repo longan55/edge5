@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"edge5/internal/pkg/protocol/goplugin"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,11 +11,37 @@ import (
 	"strings"
 	"sync"
 
-	"edge5/internal/pkg/protocol/goplugin"
-
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+// ---------------------------------------------------------------------------
+// 协议注册表
+// ---------------------------------------------------------------------------
+
+// ProtocolRegistry 协议注册表接口
+type ProtocolRegistry interface {
+	// Register 注册一个协议实现
+	Register(proto DeviceCommProtocol) error
+
+	// Get 根据协议名称获取协议实现
+	Get(name string) (DeviceCommProtocol, bool)
+
+	// List 列出所有已注册的协议元信息
+	List() []Metadata
+
+	// SyncToDB 将注册表同步到数据库
+	SyncToDB() error
+
+	// StartPlugins 启动所有 gRPC 插件进程
+	StartPlugins() error
+
+	// StopPlugins 停止所有插件进程
+	StopPlugins() error
+}
+
+// ErrProtocolNotFound 协议未找到
+var ErrProtocolNotFound = fmt.Errorf("protocol not found")
 
 // globalRegistry 全局协议注册表
 var globalRegistry = &registry{
@@ -274,6 +301,8 @@ func (r *registry) StopPlugins() error {
 // ---------------------------------------------------------------------------
 // gopluginBridge — 将 PluginAdapter 适配为 DeviceCommProtocol
 // ---------------------------------------------------------------------------
+
+var _ DeviceCommProtocol = (*gopluginBridge)(nil)
 
 type gopluginBridge struct {
 	adapter *goplugin.PluginAdapter
