@@ -19,7 +19,7 @@
         <el-card class="stat-card">
           <div class="stat-content">
             <div class="stat-info">
-              <div class="stat-title">在线设备</div>
+              <div class="stat-title">正常设备</div>
               <div class="stat-value">{{ stats.deviceOnline }}</div>
             </div>
             <div class="stat-icon">
@@ -129,21 +129,36 @@ const fetchStats = async () => {
     stats.value.deviceOnline = deviceList.filter(d => d.online).length
 
     mqttConnected.value = mqttRes.data?.connected || false
+
+    // 解析后端返回的 uptime 字符串，格式如 "up 0 days, 8 hours, 1 minute"
+    const uptimeStr = mqttRes.data?.uptime || ''
+    if (uptimeStr) {
+      uptime.value = parseUptime(uptimeStr)
+    }
   } catch (error) {
     console.error('获取统计数据失败:', error)
   }
 }
 
+// 解析 uptime 字符串，如 "up 0 days, 8 hours, 1 minute" -> "0天 8时 1分"
+const parseUptime = (str) => {
+  // 移除 "up " 前缀
+  str = str.replace(/^up\s+/, '')
+
+  const daysMatch = str.match(/(\d+)\s+days?/)
+  const hoursMatch = str.match(/(\d+)\s+hours?/)
+  const minutesMatch = str.match(/(\d+)\s+minutes?/)
+
+  const days = daysMatch ? parseInt(daysMatch[1]) : 0
+  const hours = hoursMatch ? parseInt(hoursMatch[1]) : 0
+  const minutes = minutesMatch ? parseInt(minutesMatch[1]) : 0
+
+  return `${days}天 ${hours}时 ${minutes}分`
+}
+
 const updateUptime = () => {
-  const startTime = Date.now() - (Date.now() % 1000)
-  const now = Date.now()
-  const diff = Math.floor((now - startTime) / 1000)
-
-  const days = Math.floor(diff / 86400)
-  const hours = Math.floor((diff % 86400) / 3600)
-  const minutes = Math.floor((diff % 3600) / 60)
-
-  uptime.value = `${days}天 ${hours}时 ${minutes}分`
+  // 从后端获取 uptime，不再本地计算
+  fetchStats()
 }
 
 onMounted(() => {

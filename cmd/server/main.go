@@ -11,6 +11,7 @@ import (
 	_ "edge5/internal/pkg/protocol/builtin"
 	"edge5/internal/repository"
 	"edge5/internal/router"
+	"edge5/internal/service"
 	"fmt"
 	"net/http"
 	"os"
@@ -57,6 +58,12 @@ func run() error {
 	if err := initMQTT(); err != nil {
 		global.Logger.Warn("MQTT初始化失败，将稍后重试", zap.Error(err))
 	}
+
+	// 异步测试设备连接并更新在线状态
+	service.TestDeviceConnections()
+
+	// 启动所有任务（预留接口）
+	service.StartAllTasks()
 
 	r := router.SetupRouter(config.CONFIG.Server.Mode)
 

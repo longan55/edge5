@@ -5,6 +5,7 @@ import (
 	"edge5/global"
 	"edge5/internal/model"
 	"edge5/internal/repository"
+	"edge5/internal/service"
 	"edge5/internal/utils/response"
 	"time"
 
@@ -79,6 +80,7 @@ func (h *MQTTHandler) GetStatus(c *gin.Context) {
 	}
 	response.Success(c, gin.H{
 		"connected": connected,
+		"uptime":    service.GetUptime(),
 	})
 }
 

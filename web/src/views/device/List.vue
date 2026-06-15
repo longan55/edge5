@@ -48,10 +48,10 @@
         </el-table-column>
         <el-table-column prop="brand" label="品牌" width="100" />
         <el-table-column prop="protocol" label="协议" width="120" />
-        <el-table-column label="在线状态" width="120">
+        <el-table-column label="状态" width="120">
           <template #default="{ row }">
             <el-tag :type="row.online ? 'success' : 'danger'" size="small">
-              {{ row.online ? '在线' : '离线' }}
+              {{ row.online ? '正常' : '异常' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -209,9 +209,9 @@
         <el-form-item label="型号">
           <el-input v-model="detailForm.model" readonly />
         </el-form-item>
-        <el-form-item label="在线状态">
+        <el-form-item label="状态">
           <el-tag :type="detailForm.online ? 'success' : 'danger'">
-            {{ detailForm.online ? '在线' : '离线' }}
+            {{ detailForm.online ? '正常' : '异常' }}
           </el-tag>
         </el-form-item>
         
@@ -620,10 +620,7 @@ const initFormForAdd = () => {
   deviceForm.brand = ''
   deviceForm.protocol = ''
   deviceForm.model = ''
-  deviceForm.config = {
-    pluginHost: DEFAULT_PLUGIN_HOST,
-    pluginPort: DEFAULT_PLUGIN_PORT
-  }
+  deviceForm.config = {}
 }
 
 const handleAdd = async () => {

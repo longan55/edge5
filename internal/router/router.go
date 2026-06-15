@@ -37,6 +37,15 @@ func SetupRouter(mode string) *gin.Engine {
 
 	r.GET("/api/captcha", authHandler.GetCaptcha)
 
+	// 系统状态接口（无需认证，供仪表盘首页定时调用）
+	systemHandler := handler.NewSystemHandler()
+	r.GET("/api/system/status", systemHandler.GetStatus)
+
+	// MQTT 状态接口（无需认证，供仪表盘首页定时调用，向后兼容）
+	mqttRepoForStatus := repository.NewMQTTConfigRepository(global.DB)
+	mqttHandlerForStatus := handler.NewMQTTHandler(mqttRepoForStatus)
+	r.GET("/api/mqtt/status", mqttHandlerForStatus.GetStatus)
+
 	api := r.Group("/api")
 	{
 		api.POST("/login", authHandler.Login)
@@ -64,7 +73,7 @@ func SetupRouter(mode string) *gin.Engine {
 				mqttGroup.PUT("/config", mqttHandler.UpdateConfig)
 				mqttGroup.POST("/connect", mqttHandler.Connect)
 				mqttGroup.POST("/disconnect", mqttHandler.Disconnect)
-				mqttGroup.GET("/status", mqttHandler.GetStatus)
+				// mqttGroup.GET("/status", mqttHandler.GetStatus) // 已移到外部，无需认证
 				mqttGroup.POST("/test", mqttHandler.TestConnection)
 			}
 
