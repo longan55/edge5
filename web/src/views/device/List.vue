@@ -224,7 +224,7 @@
     </el-dialog>
 
     <!-- 调试弹窗 -->
-    <el-dialog v-model="debugDialogVisible" title="设备调试" width="900px" destroy-on-close @opened="handleDebugDialogOpened">
+    <el-dialog v-model="debugDialogVisible" title="设备调试" width="1100px" destroy-on-close @opened="handleDebugDialogOpened">
       <template v-if="debugLoading">
         <div style="text-align: center; padding: 40px;">
           <el-icon class="is-loading" :size="32"><Loading /></el-icon>
@@ -778,7 +778,7 @@ const debugSchemaColumns = computed(() => {
       name: param.name || param.fieldName || '',
       cName: param.cName || param.name || '',
       type: param.type || 'string',
-      width: 120,
+      width: 178,
       default: param.default  // 使用后端返回的默认值
     }
     // 如果有 choices 选项
