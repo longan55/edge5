@@ -762,21 +762,24 @@ const debugSchema = computed(() => debugInfo.readParamsSchema || [])
 // 根据采集参数生成动态表头配置
 const debugSchemaColumns = computed(() => {
   const schema = debugSchema.value || []
-  const defaultColumns = [
-    { name: 'address', cName: '地址', type: 'string', width: 120 },
-    { name: 'offset', cName: '偏移', type: 'int', width: 100 },
-    { name: 'parseType', cName: '类型', type: 'select', width: 120, choices: ['bool', 'short', 'ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'string'] }
-  ]
+  
+  // 如果后端没有返回采集参数，使用最小化的默认配置（没有默认值）
   if (schema.length === 0) {
-    return defaultColumns
+    return [
+      { name: 'address', cName: '地址', type: 'string', width: 120 },
+      { name: 'offset', cName: '偏移', type: 'int', width: 100 },
+      { name: 'parseType', cName: '类型', type: 'select', width: 120, choices: ['bool', 'short', 'ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'string'] }
+    ]
   }
-  // 根据采集参数生成表头
+  
+  // 完全从后端返回的采集参数生成表头配置
   return schema.map(param => {
     const col = {
       name: param.name || param.fieldName || '',
       cName: param.cName || param.name || '',
       type: param.type || 'string',
-      width: 120
+      width: 120,
+      default: param.default  // 使用后端返回的默认值
     }
     // 如果有 choices 选项
     if (param.choices && Array.isArray(param.choices)) {
@@ -843,10 +846,13 @@ const addDebugParam = () => {
     _result: '',
     _writeValue: ''
   }
-  // 根据动态表头配置初始化空值
+  // 根据动态表头配置初始化默认值
   debugSchemaColumns.value.forEach(col => {
     if (col.name && col.name !== 'name') {
-      if (col.type === 'select' && col.choices && col.choices.length > 0) {
+      // 优先使用后端返回的 default 值
+      if (col.default !== undefined && col.default !== null && col.default !== '') {
+        newRow[col.name] = col.default
+      } else if (col.type === 'select' && col.choices && col.choices.length > 0) {
         newRow[col.name] = col.choices[0] // 下拉框设置默认值
       } else if (col.type === 'int') {
         newRow[col.name] = 0

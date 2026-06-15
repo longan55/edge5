@@ -68,7 +68,7 @@ func (m *McService) Info() protocol.Metadata {
 		"readParamsSchema": []any{
 			protocol.Metadata{"name": "address", "cName": "地址", "type": "string", "required": true, "default": "X0"},
 			protocol.Metadata{"name": "offset", "cName": "偏移量", "type": "int", "required": false, "default": "1"},
-			protocol.Metadata{"name": "parseType", "cName": "解析类型", "type": "select", "required": true, "default": "int", "choices": []string{"bool", "short", "ushort", "int", "uint", "long", "ulong", "float", "double", "string"}},
+			protocol.Metadata{"name": "parseType", "cName": "解析类型", "type": "select", "required": true, "default": "bool", "choices": []string{"bool", "short", "ushort", "int", "uint", "long", "ulong", "float", "double", "string"}},
 		},
 	}
 }
