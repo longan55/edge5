@@ -492,17 +492,40 @@ const applyProtocolDefaults = () => {
   allowed.add('pluginPort')
   allowed.add('model')
 
+  // 只删除已知无效的旧格式字段，保留其他字段
+  // 避免因为协议选项未正确加载而删除有效配置
+  const knownInvalidFields = new Set(['runtime', 'extra', 'serial_port', 'baud_rate'])
+  
   for (const k of Object.keys(deviceForm.config)) {
-    if (!allowed.has(k)) delete deviceForm.config[k]
+    // 只删除已知无效的字段，不删除未知字段
+    if (knownInvalidFields.has(k)) {
+      delete deviceForm.config[k]
+    }
   }
 
   for (const opt of params) {
     const curr = deviceForm.config[opt.name]
-    const hasValue = curr !== undefined && curr !== null && curr !== ''
-    if (!hasValue && opt.default !== undefined) {
-      deviceForm.config[opt.name] = deepClone(opt.default)
-    } else if (!hasValue) {
-      deviceForm.config[opt.name] = (opt.type === 'int' || opt.type === 'float') ? 0 : ''
+    // 如果字段不存在，设置默认值
+    if (curr === undefined) {
+      if (opt.default !== undefined) {
+        deviceForm.config[opt.name] = deepClone(opt.default)
+      } else if (opt.type === 'int' || opt.type === 'float') {
+        deviceForm.config[opt.name] = 0
+      } else {
+        deviceForm.config[opt.name] = ''
+      }
+    } else if (opt.type === 'int' && typeof curr === 'string') {
+      // 类型转换：字符串转整数
+      const numValue = parseInt(curr, 10)
+      if (!isNaN(numValue)) {
+        deviceForm.config[opt.name] = numValue
+      }
+    } else if (opt.type === 'float' && typeof curr === 'string') {
+      // 类型转换：字符串转浮点数
+      const floatValue = parseFloat(curr)
+      if (!isNaN(floatValue)) {
+        deviceForm.config[opt.name] = floatValue
+      }
     }
   }
 
@@ -632,20 +655,46 @@ const handleEdit = async row => {
   deviceForm.model = ''
 
   try {
-    const parsed = JSON.parse(row.config || '{}')
-    deviceForm.config = (parsed && typeof parsed === 'object') ? parsed : { pluginHost: DEFAULT_PLUGIN_HOST, pluginPort: DEFAULT_PLUGIN_PORT }
+    // row.config 可能已经是解析后的对象（Proxy），也可能是 JSON 字符串
+    let parsed = row.config
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed || '{}')
+    } else if (typeof parsed !== 'object' || parsed === null) {
+      parsed = {}
+    }
+    
+    // 清空旧配置，然后合并新配置
+    for (const key of Object.keys(deviceForm.config)) {
+      delete deviceForm.config[key]
+    }
+    Object.assign(deviceForm.config, parsed)
   } catch {
     deviceForm.config = { pluginHost: DEFAULT_PLUGIN_HOST, pluginPort: DEFAULT_PLUGIN_PORT }
   }
 
+  // 确保必要字段存在
   ensureConfigShape()
 
-  if (!deviceOptions.deviceTypes.length) {
+  // 调试日志
+  console.log('=== 编辑设备调试信息 ===')
+  console.log('原始 row.config:', row.config)
+  console.log('解析后的 deviceForm.config:', { ...deviceForm.config })
+  console.log('设备协议:', deviceForm.protocol)
+
+  // 确保协议选项已加载（包括 protocolOptions）
+  if (!deviceOptions.deviceTypes.length || !Object.keys(deviceOptions.protocolOptions).length) {
     await fetchDeviceOptions()
   }
 
-  // flatten & migrate old format
+  // 调试日志
+  console.log('protocolOptions 键:', Object.keys(deviceOptions.protocolOptions))
+  console.log('protocolConnParams:', protocolConnParams.value)
+
+  // 迁移旧格式配置
   migrateExistingConfigForProtocol()
+
+  // 调试日志
+  console.log('迁移后的 deviceForm.config:', { ...deviceForm.config })
 
   if (modelRelated.value && modelOptions.value.length > 0) {
     deviceForm.model = deviceForm.config.model || modelOptions.value[0]
