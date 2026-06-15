@@ -190,7 +190,7 @@ func parseDevicePluginRuntime(device *model.Device) (host string, port int, para
 	}
 
 	// New flat format:
-	// {"pluginHost":"127.0.0.1","pluginPort":50051,"ip":"192.168.1.100","port":6000,"pcNum":"0xFF","model":"Q03"}
+	// {"ip":"192.168.1.100","port":6000,"pcNum":"0xFF","model":"Q03"}
 	//
 	// Backward-compat: if root["runtime"] exists as an object, treat it as the old format.
 	runtimeObj, isOld := root["runtime"].(map[string]any)
@@ -207,11 +207,6 @@ func parseDevicePluginRuntime(device *model.Device) (host string, port int, para
 			if n, e := strconv.Atoi(p); e == nil {
 				port = n
 			}
-		}
-		if host != "" && port != 0 {
-			// migrate host/port to root level
-			root["pluginHost"] = host
-			root["pluginPort"] = port
 		}
 		for k, v := range runtimeObj {
 			if k == "extra" {
@@ -251,29 +246,12 @@ func parseDevicePluginRuntime(device *model.Device) (host string, port int, para
 		return host, port, params, intervalMs, nil
 	}
 
-	// New flat format
-	host, _ = root["pluginHost"].(string)
-	switch p := root["pluginPort"].(type) {
-	case float64:
-		port = int(p)
-	case int:
-		port = p
-	case string:
-		if n, e := strconv.Atoi(p); e == nil {
-			port = n
-		}
-	}
+	// New flat format - 使用默认插件地址
+	host = "127.0.0.1"
+	port = 50051
 
-	if host == "" || port == 0 {
-		return "", 0, nil, 0, errors.New("device.config missing pluginHost/pluginPort")
-	}
-
-	// All other fields (except pluginHost/pluginPort) are connection params sent to the plugin
-	skipKeys := map[string]bool{"pluginHost": true, "pluginPort": true}
+	// All fields are connection params sent to the plugin
 	for k, v := range root {
-		if skipKeys[k] {
-			continue
-		}
 		switch vv := v.(type) {
 		case string:
 			params[k] = vv

@@ -214,9 +214,25 @@
             {{ detailForm.online ? '在线' : '离线' }}
           </el-tag>
         </el-form-item>
-        <el-form-item label="连接参数">
-          <pre style="max-height: 200px; overflow-y: auto; background: #f5f5f5; padding: 10px; border-radius: 4px;">{{ detailForm.config }}</pre>
-        </el-form-item>
+        
+        <el-divider />
+        <div style="font-weight: bold; margin-bottom: 10px;">连接参数（设备侧）</div>
+        <el-row :gutter="12">
+          <el-col
+            v-for="opt in detailConnParams"
+            :key="opt.name"
+            :span="12"
+            style="margin-bottom: 10px"
+          >
+            <el-form-item :label="opt.cName">
+              <el-input
+                v-model="detailForm.config[opt.name]"
+                readonly
+                :type="opt.type === 'int' || opt.type === 'float' ? 'number' : 'text'"
+              />
+            </el-form-item>
+          </el-col>
+        </el-row>
       </el-form>
       <template #footer>
         <el-button @click="detailDialogVisible = false">关闭</el-button>
@@ -329,7 +345,7 @@ const detailForm = reactive({
   protocol: '',
   model: '',
   online: false,
-  config: ''
+  config: {}
 })
 
 const deviceOptions = reactive({
@@ -350,9 +366,6 @@ const pagination = reactive({
   total: 0
 })
 
-const DEFAULT_PLUGIN_HOST = '127.0.0.1'
-const DEFAULT_PLUGIN_PORT = 50051
-
 const deviceForm = reactive({
   id: null,
   device_sn: '',
@@ -361,10 +374,7 @@ const deviceForm = reactive({
   brand: '',
   protocol: '',
   model: '',
-  config: {
-    pluginHost: DEFAULT_PLUGIN_HOST,
-    pluginPort: DEFAULT_PLUGIN_PORT
-  }
+  config: {}
 })
 
 const dialogTitle = computed(() => (deviceForm.id ? '编辑设备' : '新增设备'))
@@ -405,6 +415,12 @@ const modelOptions = computed(() => {
 const protocolConnParams = computed(() => {
   if (!deviceForm.protocol) return []
   const group = deviceOptions.protocolOptions?.[deviceForm.protocol]
+  return group?.options || []
+})
+
+const detailConnParams = computed(() => {
+  if (!detailForm.protocol) return []
+  const group = deviceOptions.protocolOptions?.[detailForm.protocol]
   return group?.options || []
 })
 
@@ -465,17 +481,13 @@ const normalizeProtocol = (v, deviceType) => {
 
 const ensureConfigShape = () => {
   if (!deviceForm.config || typeof deviceForm.config !== 'object') {
-    deviceForm.config = { pluginHost: DEFAULT_PLUGIN_HOST, pluginPort: DEFAULT_PLUGIN_PORT }
+    deviceForm.config = {}
   }
-  if (!deviceForm.config.pluginHost) deviceForm.config.pluginHost = DEFAULT_PLUGIN_HOST
-  if (!deviceForm.config.pluginPort) deviceForm.config.pluginPort = DEFAULT_PLUGIN_PORT
 }
 
 const clearProtocolRuntimeParams = () => {
   if (!deviceForm.config || typeof deviceForm.config !== 'object') return
   const allowed = new Set(protocolConnParams.value.map(p => p.name))
-  allowed.add('pluginHost')
-  allowed.add('pluginPort')
   allowed.add('model')
 
   for (const k of Object.keys(deviceForm.config)) {
@@ -488,13 +500,11 @@ const applyProtocolDefaults = () => {
   const params = protocolConnParams.value
 
   const allowed = new Set(params.map(p => p.name))
-  allowed.add('pluginHost')
-  allowed.add('pluginPort')
   allowed.add('model')
 
   // 只删除已知无效的旧格式字段，保留其他字段
   // 避免因为协议选项未正确加载而删除有效配置
-  const knownInvalidFields = new Set(['runtime', 'extra', 'serial_port', 'baud_rate'])
+  const knownInvalidFields = new Set(['runtime', 'extra', 'serial_port', 'baud_rate', 'pluginHost', 'pluginPort'])
   
   for (const k of Object.keys(deviceForm.config)) {
     // 只删除已知无效的字段，不删除未知字段
@@ -550,10 +560,6 @@ const migrateExistingConfigForProtocol = () => {
     for (const k of Object.keys(oldRuntime)) {
       if (k === 'extra') continue
       if (cfg[k] === undefined) cfg[k] = oldRuntime[k]
-    }
-    if (oldRuntime.extra && typeof oldRuntime.extra === 'object') {
-      if (!cfg.pluginHost) cfg.pluginHost = oldRuntime.extra.host || DEFAULT_PLUGIN_HOST
-      if (!cfg.pluginPort) cfg.pluginPort = oldRuntime.extra.port || DEFAULT_PLUGIN_PORT
     }
     delete cfg.runtime
   }
@@ -636,12 +642,25 @@ const handleDetail = (row) => {
   detailForm.protocol = row.protocol || ''
   detailForm.model = row.model || ''
   detailForm.online = row.online || false
-  try {
-    const config = JSON.parse(row.config || '{}')
-    detailForm.config = JSON.stringify(config, null, 2)
-  } catch {
-    detailForm.config = row.config || ''
+  
+  // 清空旧配置
+  for (const key of Object.keys(detailForm.config)) {
+    delete detailForm.config[key]
   }
+  
+  // 解析配置
+  try {
+    let config = row.config
+    if (typeof config === 'string') {
+      config = JSON.parse(config || '{}')
+    } else if (typeof config !== 'object' || config === null) {
+      config = {}
+    }
+    Object.assign(detailForm.config, config)
+  } catch {
+    // 如果解析失败，保持空配置
+  }
+  
   detailDialogVisible.value = true
 }
 
@@ -669,32 +688,19 @@ const handleEdit = async row => {
     }
     Object.assign(deviceForm.config, parsed)
   } catch {
-    deviceForm.config = { pluginHost: DEFAULT_PLUGIN_HOST, pluginPort: DEFAULT_PLUGIN_PORT }
+    deviceForm.config = {}
   }
 
   // 确保必要字段存在
   ensureConfigShape()
-
-  // 调试日志
-  console.log('=== 编辑设备调试信息 ===')
-  console.log('原始 row.config:', row.config)
-  console.log('解析后的 deviceForm.config:', { ...deviceForm.config })
-  console.log('设备协议:', deviceForm.protocol)
 
   // 确保协议选项已加载（包括 protocolOptions）
   if (!deviceOptions.deviceTypes.length || !Object.keys(deviceOptions.protocolOptions).length) {
     await fetchDeviceOptions()
   }
 
-  // 调试日志
-  console.log('protocolOptions 键:', Object.keys(deviceOptions.protocolOptions))
-  console.log('protocolConnParams:', protocolConnParams.value)
-
   // 迁移旧格式配置
   migrateExistingConfigForProtocol()
-
-  // 调试日志
-  console.log('迁移后的 deviceForm.config:', { ...deviceForm.config })
 
   if (modelRelated.value && modelOptions.value.length > 0) {
     deviceForm.model = deviceForm.config.model || modelOptions.value[0]
