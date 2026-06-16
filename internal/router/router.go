@@ -55,6 +55,9 @@ func SetupRouter(mode string) *gin.Engine {
 		protected.Use(middleware.JWTAuth())
 		{
 			protected.GET("/user/info", authHandler.GetUserInfo)
+			protected.GET("/user/detail", authHandler.GetUserDetail)
+			protected.PUT("/user/profile", authHandler.UpdateProfile)
+			protected.PUT("/user/password", authHandler.ChangePassword)
 
 			user := protected.Group("/user")
 			{

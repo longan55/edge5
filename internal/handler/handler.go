@@ -73,6 +73,84 @@ func (h *AuthHandler) GetUserInfo(c *gin.Context) {
 	response.Success(c, info)
 }
 
+// GetUserDetail 获取用户详细信息（包含邮箱、电话等）
+func (h *AuthHandler) GetUserDetail(c *gin.Context) {
+	userID := GetUserID(c)
+
+	user, err := h.userService.GetUserByID(userID)
+	if err != nil {
+		response.Error(c, response.CodeError, "获取用户信息失败")
+		return
+	}
+
+	response.Success(c, gin.H{
+		"id":       user.ID,
+		"username": user.Username,
+		"nickname": user.Nickname,
+		"email":    user.Email,
+		"phone":    user.Phone,
+		"avatar":   user.Avatar,
+		"role_id":  user.RoleID,
+		"role": gin.H{
+			"id":   user.Role.ID,
+			"name": user.Role.Name,
+			"code": user.Role.Code,
+		},
+	})
+}
+
+// UpdateProfile 更新用户个人信息
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	userID := GetUserID(c)
+
+	var req struct {
+		Nickname string `json:"nickname"`
+		Email    string `json:"email"`
+		Phone    string `json:"phone"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, response.CodeInvalidParam, "参数错误")
+		return
+	}
+
+	if err := h.userService.UpdateProfile(userID, req.Nickname, req.Email, req.Phone); err != nil {
+		response.Error(c, response.CodeError, "更新用户信息失败")
+		return
+	}
+
+	response.Success(c, nil)
+}
+
+// ChangePassword 修改密码
+func (h *AuthHandler) ChangePassword(c *gin.Context) {
+	userID := GetUserID(c)
+
+	var req struct {
+		OldPassword string `json:"old_password" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, response.CodeInvalidParam, "参数错误")
+		return
+	}
+
+	if err := h.userService.ChangePassword(userID, req.OldPassword, req.NewPassword); err != nil {
+		switch err {
+		case service.ErrInvalidPassword:
+			response.Error(c, response.CodeInvalidPassword, "原密码错误")
+		default:
+			response.Error(c, response.CodeError, err.Error())
+		}
+		return
+	}
+
+	response.Success(c, gin.H{
+		"message": "密码修改成功",
+	})
+}
+
 func (h *AuthHandler) GetCaptcha(c *gin.Context) {
 	id, base64, err := captcha.GenerateCaptcha()
 	if err != nil {

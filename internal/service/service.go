@@ -144,6 +144,46 @@ func (s *UserService) ListUsers(page, pageSize int) ([]*model.User, int64, error
 	return s.userRepo.List(page, pageSize)
 }
 
+// ChangePassword 修改密码
+func (s *UserService) ChangePassword(userID uint64, oldPassword, newPassword string) error {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	// 验证旧密码
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
+		return ErrInvalidPassword
+	}
+
+	// 新密码长度校验
+	if len(newPassword) < 6 {
+		return errors.New("密码至少6位")
+	}
+
+	// 生成新密码哈希
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	user.Password = string(hash)
+	return s.userRepo.Update(user)
+}
+
+// UpdateProfile 更新用户个人信息
+func (s *UserService) UpdateProfile(userID uint64, nickname, email, phone string) error {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	user.Nickname = nickname
+	user.Email = email
+	user.Phone = phone
+	return s.userRepo.Update(user)
+}
+
 type LoginResult struct {
 	Token    string    `json:"token"`
 	UserInfo *UserInfo `json:"user"`
