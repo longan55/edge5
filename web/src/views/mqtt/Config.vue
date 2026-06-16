@@ -11,7 +11,7 @@
           <h4>基础</h4>
         </div>
 
-        <el-form :model="form" label-width="100px">
+        <el-form :model="form" label-width="120px">
           <!-- 主机 -->
           <el-form-item label="主机*">
             <div class="host-input-group">
@@ -63,8 +63,8 @@
 
             <el-form-item label="Certificate">
               <el-radio-group v-model="form.cert_type">
-                <el-radio label="ca_signed">CA signed server certificate</el-radio>
-                <el-radio label="self_signed">CA Self signed certificates</el-radio>
+                <el-radio label="ca_signed">CA已签署服务器证书</el-radio>
+                <el-radio label="self_signed">CA自签名证书文件</el-radio>
               </el-radio-group>
             </el-form-item>
 
@@ -331,6 +331,10 @@ const generateClientId = () => {
 const onSSLChange = (val) => {
   if (val) {
     form.protocol = 'mqtts://'
+    // 默认选择 CA已签署服务器证书
+    if (!form.cert_type) {
+      form.cert_type = 'ca_signed'
+    }
   } else {
     form.protocol = 'mqtt://'
   }
@@ -365,7 +369,7 @@ const toggleAdvanced = () => {
 const selectFile = (field) => {
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.crt,.pem,.key,.cert'
+  input.accept = '.crt,.key,.pem,.jks,.der,.cer,.pfx'
   input.onchange = (e) => {
     const file = e.target.files[0]
     if (file) {
@@ -430,7 +434,7 @@ onMounted(() => {
 .file-input-group {
   display: flex;
   gap: 8px;
-  width: 100%;
+  width: 110%;
 }
 
 .file-input-group .el-input {
