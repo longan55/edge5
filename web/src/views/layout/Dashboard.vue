@@ -171,9 +171,17 @@ const parseUptime = (str) => {
   return `${days}天 ${hours}时 ${minutes}分`
 }
 
-const updateUptime = () => {
-  // 从后端获取 uptime，不再本地计算
-  fetchStats()
+const updateUptime = async () => {
+  // 只更新 uptime，不重复调用 fetchStats
+  try {
+    const mqttRes = await request.get('/mqtt/status')
+    const uptimeStr = mqttRes.data?.uptime || ''
+    if (uptimeStr) {
+      uptime.value = parseUptime(uptimeStr)
+    }
+  } catch (error) {
+    console.error('获取运行时间失败:', error)
+  }
 }
 
 // 测试设备连接
@@ -232,10 +240,7 @@ const startCooldown = () => {
 
 onMounted(() => {
   fetchStats()
-  setInterval(fetchStats, 30000)
-
-  updateUptime()
-  uptimeInterval = setInterval(updateUptime, 60000)
+  setInterval(fetchStats, 60000)
 })
 
 onUnmounted(() => {
