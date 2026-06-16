@@ -61,6 +61,9 @@ func run() error {
 		global.Logger.Warn("MQTT初始化失败，将稍后重试", zap.Error(err))
 	}
 
+	// 启动 MQTT 业务服务（网关注册、心跳、状态上报、订阅下行主题）
+	startMQTTBusiness()
+
 	// 异步测试设备连接并更新在线状态
 	service.TestDeviceConnections()
 
@@ -326,4 +329,18 @@ func waitForSignal() {
 	global.Logger.Info("接收到退出信号",
 		zap.String("signal", sig.String()),
 		zap.String("code", fmt.Sprintf("%d", sig)))
+}
+
+func startMQTTBusiness() {
+	deviceRepo := repository.NewDeviceRepository(global.DB)
+	deviceStatusRepo := repository.NewDeviceStatusRepository(global.DB)
+	mqttBusiness := service.NewMQTTBusinessService(deviceRepo, deviceStatusRepo, global.Logger)
+
+	go mqttBusiness.Start()
+
+	global.RegisterQuitTask(func() error {
+		global.Logger.Info("关闭MQTT业务服务...")
+		mqttBusiness.Stop()
+		return nil
+	}, "关闭MQTT业务服务", 2)
 }
