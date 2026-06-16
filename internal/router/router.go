@@ -78,6 +78,15 @@ func SetupRouter(mode string) *gin.Engine {
 				mqttGroup.POST("/disconnect", mqttHandler.Disconnect)
 				// mqttGroup.GET("/status", mqttHandler.GetStatus) // 已移到外部，无需认证
 				mqttGroup.POST("/test", mqttHandler.TestConnection)
+
+				// 主题模板配置
+				mqttGroup.GET("/topics", mqttHandler.GetTopics)
+				mqttGroup.PUT("/topics", mqttHandler.BatchSaveTopics)
+				mqttGroup.POST("/topics/reset", mqttHandler.ResetTopics)
+				// 全局主题配置
+				mqttGroup.GET("/topic-config", mqttHandler.GetTopicConfig)
+				mqttGroup.PUT("/topic-config", mqttHandler.SaveTopicConfig)
+				mqttGroup.POST("/topic-config/reset", mqttHandler.ResetTopicConfig)
 			}
 
 			// device add options (deviceTypes + protocolOptions)

@@ -25,14 +25,27 @@ func NewMqttClient() *myMqttClient {
 func (my *myMqttClient) Connect() error {
 	if my.init {
 		if my.connected {
+			Logger.Debug("MQTT Connect: 已连接，跳过", zap.Bool("connected", my.connected))
 			return nil
-		} else {
-			return errors.New("mqtt client not connected")
 		}
+		Logger.Warn("MQTT Connect: 已初始化但未连接")
+		return errors.New("mqtt client not connected")
 	}
-	opts := mqtt.NewClientOptions()
 
 	broker := buildBrokerAddress()
+	Logger.Info("MQTT Connect: 开始连接",
+		zap.String("broker", broker),
+		zap.String("client_id", CONFIG.MQTT.ClientID),
+		zap.String("username", CONFIG.MQTT.Username),
+		zap.String("version", CONFIG.MQTT.Version),
+		zap.Bool("ssl", CONFIG.MQTT.SSL),
+		zap.Bool("auto_reconnect", CONFIG.MQTT.AutoReconnect),
+		zap.Int("keep_alive", CONFIG.MQTT.KeepAlive),
+		zap.Int("connect_timeout", CONFIG.MQTT.ConnectTimeout),
+	)
+
+	opts := mqtt.NewClientOptions()
+
 	opts.AddBroker(broker)
 
 	clientID := CONFIG.MQTT.ClientID
@@ -77,6 +90,7 @@ func (my *myMqttClient) Connect() error {
 	if CONFIG.MQTT.SSL {
 		tlsConfig, err := buildTLSConfig()
 		if err != nil {
+			Logger.Error("MQTT Connect: TLS配置构建失败", zap.Error(err))
 			return fmt.Errorf("build TLS config failed: %w", err)
 		}
 		opts.SetTLSConfig(tlsConfig)
@@ -105,29 +119,49 @@ func (my *myMqttClient) Connect() error {
 	}
 
 	my.init = true
+	Logger.Info("MQTT Connect: 初始化完成", zap.Bool("connected", my.connected))
 	return token.Error()
 }
 
 func buildBrokerAddress() string {
 	protocol := CONFIG.MQTT.Protocol
+	host := CONFIG.MQTT.Host
+	port := CONFIG.MQTT.Port
+
 	if protocol == "" {
 		protocol = "mqtt://"
 	}
-	host := CONFIG.MQTT.Host
 	if host == "" {
 		host = CONFIG.MQTT.Broker
 	}
-	port := CONFIG.MQTT.Port
 	if port <= 0 {
 		port = 1883
 		if protocol == "mqtts://" {
 			port = 8883
 		}
 	}
-	return fmt.Sprintf("%s%s:%d", protocol, host, port)
+
+	address := fmt.Sprintf("%s%s:%d", protocol, host, port)
+	Logger.Debug("MQTT buildBrokerAddress",
+		zap.String("raw_protocol", CONFIG.MQTT.Protocol),
+		zap.String("raw_host", CONFIG.MQTT.Host),
+		zap.String("raw_broker", CONFIG.MQTT.Broker),
+		zap.Int("raw_port", CONFIG.MQTT.Port),
+		zap.String("resolved", address),
+	)
+	return address
 }
 
 func buildTLSConfig() (*tls.Config, error) {
+	Logger.Debug("MQTT buildTLSConfig",
+		zap.Bool("ssl_verify", CONFIG.MQTT.SSLVerify),
+		zap.String("alpn_tag", CONFIG.MQTT.ALPNTag),
+		zap.String("cert_type", CONFIG.MQTT.CertType),
+		zap.String("ca_file", CONFIG.MQTT.CAFile),
+		zap.String("cert_file", CONFIG.MQTT.CertFile),
+		zap.String("key_file", CONFIG.MQTT.KeyFile),
+	)
+
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: !CONFIG.MQTT.SSLVerify,
 	}
@@ -160,15 +194,21 @@ func buildTLSConfig() (*tls.Config, error) {
 }
 
 func (my *myMqttClient) Close() error {
+	Logger.Debug("MQTT Close",
+		zap.Bool("init", my.init),
+		zap.Bool("connected", my.connected),
+	)
 	if !my.init {
 		return nil
 	}
 	if !my.connected {
+		my.init = false
 		return nil
 	}
 	my.client.Disconnect(1000)
 	my.init = false
 	my.connected = false
+	Logger.Info("MQTT 连接已断开")
 	return nil
 }
 

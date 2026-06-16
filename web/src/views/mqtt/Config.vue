@@ -192,11 +192,76 @@
         <span style="margin-left: 20px">缓存队列: {{ cacheSize }} 条消息</span>
       </div>
     </el-card>
+
+    <!-- 主题配置 -->
+    <el-card style="margin-top: 20px;">
+      <template #header>
+        <div class="topic-header">
+          <span>主题配置</span>
+          <div>
+            <el-button type="primary" size="small" @click="handleSaveTopics">保存主题</el-button>
+            <el-button size="small" @click="handleResetTopics">恢复默认</el-button>
+          </div>
+        </div>
+      </template>
+
+      <div class="topic-global">
+        <el-form :inline="true" :model="topicConfig" class="topic-global-form">
+          <el-form-item label="前缀">
+            <el-input v-model="topicConfig.prefix" placeholder="/aixot" style="width: 150px" />
+          </el-form-item>
+          <el-form-item label="区分上下行">
+            <el-switch v-model="topicConfig.show_direction" />
+          </el-form-item>
+          <el-form-item label="上行关键词">
+            <el-input v-model="topicConfig.up_keyword" placeholder="up" style="width: 100px" />
+          </el-form-item>
+          <el-form-item label="下行关键词">
+            <el-input v-model="topicConfig.down_keyword" placeholder="down" style="width: 100px" />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <el-table :data="topics" style="width: 100%" stripe>
+        <el-table-column label="序号" width="60" type="index" />
+        <el-table-column label="名称" width="130">
+          <template #default="{ row }">
+            <el-input v-model="row.display_name" size="small" />
+          </template>
+        </el-table-column>
+        <el-table-column label="方向" width="90">
+          <template #default="{ row }">
+            <el-select v-model="row.direction" size="small">
+              <el-option label="上行" value="up" />
+              <el-option label="下行" value="down" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="路径模板" min-width="350">
+          <template #default="{ row }">
+            <div class="topic-path-group">
+              <span class="topic-prefix-display">{{ topicConfig.prefix }}/</span>
+              <span v-if="topicConfig.show_direction" class="topic-prefix-display">{{ getDirectionKeyword(row.direction) }}/</span>
+              <el-input v-model="row.path" size="small" placeholder="gateway/{gatewaySn}/..." class="topic-path-input" />
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="完整主题预览" min-width="400">
+          <template #default="{ row }">
+            <code class="topic-preview">{{ buildFullTopic(row) }}</code>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="topic-tips">
+        <p>可用变量：<code>{gatewaySn}</code> — 网关SN, <code>{deviceSn}</code> — 设备SN</p>
+      </div>
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, watch, nextTick } from 'vue'
 import request from '@/utils/request'
 import { ElMessage } from 'element-plus'
 
@@ -297,7 +362,13 @@ const onTopicAliasMaxChange = (val) => {
 
 const handleSave = async () => {
   try {
-    await request.put('/mqtt/config', form)
+    // 将空字符串转回 0，防止 Go 端 int 字段反序列化失败
+    const payload = { ...form }
+    if (payload.receive_max === '') payload.receive_max = 0
+    if (payload.max_packet_size === '') payload.max_packet_size = 0
+    if (payload.topic_alias_max === '') payload.topic_alias_max = 0
+
+    await request.put('/mqtt/config', payload)
     ElMessage.success('配置已保存')
   } catch (error) {
     console.error('保存配置失败:', error)
@@ -307,11 +378,17 @@ const handleSave = async () => {
 
 const handleConnect = async () => {
   try {
+    // 将空字符串转回 0，防止 Go 端 int 字段反序列化失败
+    const payload = { ...form }
+    if (payload.receive_max === '') payload.receive_max = 0
+    if (payload.max_packet_size === '') payload.max_packet_size = 0
+    if (payload.topic_alias_max === '') payload.topic_alias_max = 0
+
     if (mqttConnected.value) {
-      await request.post('/mqtt/disconnect', form)
+      await request.post('/mqtt/disconnect', payload)
       ElMessage.success('已断开连接')
     } else {
-      await request.post('/mqtt/connect', form)
+      await request.post('/mqtt/connect', payload)
       ElMessage.success('连接成功')
     }
     fetchStatus()
@@ -379,10 +456,93 @@ const selectFile = (field) => {
   input.click()
 }
 
+// ─── 主题配置 ────────────────────────────
+const topics = ref([])
+const topicConfig = reactive({
+  prefix: '/aixot',
+  up_keyword: 'up',
+  down_keyword: 'down',
+  show_direction: true
+})
+
+const getDirectionKeyword = (direction) => {
+  return direction === 'up' ? topicConfig.up_keyword : topicConfig.down_keyword
+}
+
+const buildFullTopic = (row) => {
+  let topic = topicConfig.prefix
+  if (topicConfig.show_direction) {
+    topic += '/' + getDirectionKeyword(row.direction)
+  }
+  topic += '/' + row.path
+  if (row.custom_part) {
+    topic += row.custom_part
+  }
+  return topic
+}
+
+const fetchTopics = async () => {
+  try {
+    const [topicsRes, configRes] = await Promise.all([
+      request.get('/mqtt/topics'),
+      request.get('/mqtt/topic-config')
+    ])
+    
+    if (topicsRes.data && topicsRes.data.length > 0) {
+      topics.value = topicsRes.data
+    }
+    
+    if (configRes.data) {
+      Object.assign(topicConfig, configRes.data)
+    }
+  } catch (error) {
+    console.error('获取主题配置失败:', error)
+  }
+}
+
+const handleSaveTopics = async () => {
+  try {
+    await Promise.all([
+      request.put('/mqtt/topic-config', topicConfig),
+      request.put('/mqtt/topics', topics.value.map(t => ({
+        ...t,
+        is_default: false
+      })))
+    ])
+    ElMessage.success('主题配置已保存')
+  } catch (error) {
+    console.error('保存主题失败:', error)
+    ElMessage.error('保存主题失败')
+  }
+}
+
+const handleResetTopics = async () => {
+  try {
+    const [topicsRes, configRes] = await Promise.all([
+      request.post('/mqtt/topics/reset'),
+      request.post('/mqtt/topic-config/reset')
+    ])
+    
+    if (topicsRes.data) {
+      topics.value = topicsRes.data
+    }
+    
+    if (configRes.data) {
+      Object.assign(topicConfig, configRes.data)
+    }
+    
+    ElMessage.success('已恢复默认主题')
+  } catch (error) {
+    console.error('恢复默认主题失败:', error)
+    ElMessage.error('恢复默认主题失败')
+  }
+}
+
 onMounted(() => {
   fetchConfig()
+  fetchTopics()
   fetchStatus()
-  setInterval(fetchStatus, 5000)
+  setInterval(fetchStatus, 60000)
 })
 </script>
 
@@ -483,5 +643,66 @@ onMounted(() => {
 .slide-leave-from {
   opacity: 1;
   max-height: 1000px;
+}
+
+/* ─── 主题配置 ─── */
+.topic-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.topic-global {
+  margin-bottom: 16px;
+  padding: 16px;
+  background-color: #fafafa;
+  border-radius: 8px;
+}
+
+.topic-global-form {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.topic-path-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.topic-prefix-display {
+  color: #909399;
+  font-size: 13px;
+  white-space: nowrap;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.topic-path-input {
+  flex: 1;
+}
+
+.topic-preview {
+  font-size: 13px;
+  color: #409eff;
+  word-break: break-all;
+  font-family: 'Monaco', 'Menlo', monospace;
+}
+
+.topic-tips {
+  margin-top: 12px;
+  padding: 12px 16px;
+  background-color: #f5f7fa;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #909399;
+}
+
+.topic-tips code {
+  color: #409eff;
+  background: #ecf5ff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Monaco', 'Menlo', monospace;
 }
 </style>

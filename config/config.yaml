@@ -30,12 +30,32 @@ cache:
 mqtt:
   enabled: true
   broker: "mqtt://127.0.0.1:1883"
+  protocol: "mqtt://"
+  host: ""
   port: 1883
   username: ""
   password: ""
   client_id: "edge5-gateway"
   keep_alive: 60
   qos: 0
+  ssl: false
+  ssl_verify: true
+  alpn_tag: ""
+  cert_type: ""
+  ca_file: ""
+  cert_file: ""
+  key_file: ""
+  version: "5.0"
+  connect_timeout: 10
+  auto_reconnect: true
+  reconnect_period: 4000
+  clean_start: false
+  session_expiry: 7200
+  receive_max: 0
+  max_packet_size: 0
+  topic_alias_max: 0
+  request_response: false
+  request_problem: false
 
 log:
   level: "debug"

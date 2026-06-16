@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS sys_login_log (
 CREATE TABLE IF NOT EXISTS mqtt_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     broker VARCHAR(256) NOT NULL,
+    protocol VARCHAR(16) DEFAULT 'mqtt://',
+    host VARCHAR(128),
     port INTEGER NOT NULL,
     username VARCHAR(64),
     password VARCHAR(128),
@@ -77,9 +79,66 @@ CREATE TABLE IF NOT EXISTS mqtt_config (
     qos TINYINT DEFAULT 1,
     on TINYINT DEFAULT 0,
     gateway_sn VARCHAR(64) UNIQUE NOT NULL,
+    ssl TINYINT DEFAULT 0,
+    ssl_verify TINYINT DEFAULT 1,
+    alpn_tag VARCHAR(64),
+    cert_type VARCHAR(32),
+    ca_file VARCHAR(512),
+    cert_file VARCHAR(512),
+    key_file VARCHAR(512),
+    version VARCHAR(8) DEFAULT '5.0',
+    connect_timeout INTEGER DEFAULT 10,
+    auto_reconnect TINYINT DEFAULT 1,
+    reconnect_period INTEGER DEFAULT 4000,
+    clean_start TINYINT DEFAULT 0,
+    session_expiry INTEGER DEFAULT 7200,
+    receive_max INTEGER DEFAULT 0,
+    max_packet_size INTEGER DEFAULT 0,
+    topic_alias_max INTEGER DEFAULT 0,
+    request_response_info TINYINT DEFAULT 0,
+    request_problem_info TINYINT DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- MQTT主题配置表
+CREATE TABLE IF NOT EXISTS mqtt_topic_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prefix VARCHAR(64) DEFAULT '/aixot',
+    up_keyword VARCHAR(32) DEFAULT 'up',
+    down_keyword VARCHAR(32) DEFAULT 'down',
+    show_direction BOOLEAN DEFAULT TRUE,
+    gateway_sn VARCHAR(64) UNIQUE NOT NULL,
+    created_at INTEGER DEFAULT CURRENT_TIMESTAMP,
+    updated_at INTEGER DEFAULT CURRENT_TIMESTAMP
+);
+
+-- MQTT主题模板表
+CREATE TABLE IF NOT EXISTS mqtt_topic_template (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key VARCHAR(64) UNIQUE NOT NULL,
+    display_name VARCHAR(128) NOT NULL,
+    prefix VARCHAR(64) DEFAULT '/aixot',
+    direction VARCHAR(16) NOT NULL,
+    path VARCHAR(512) NOT NULL,
+    custom_part VARCHAR(256),
+    is_default BOOLEAN DEFAULT FALSE,
+    sort INTEGER DEFAULT 0
+);
+
+-- 初始化默认主题模板
+INSERT OR IGNORE INTO mqtt_topic_template (key, display_name, prefix, direction, path, is_default, sort) VALUES
+('register_up', '注册上行', '/aixot', 'up', 'gateway/register', TRUE, 1),
+('register_down_ack', '注册响应下行', '/aixot', 'down', 'gateway/register/ack', TRUE, 2),
+('heartbeat_up', '心跳上行', '/aixot', 'up', '{gatewaySn}/heartbeat', TRUE, 3),
+('gateway_status_up', '网关状态上行', '/aixot', 'up', '{gatewaySn}/properties', TRUE, 4),
+('gateway_cmd_down', '网关指令下行', '/aixot', 'down', '{gatewaySn}/command', TRUE, 5),
+('cmd_reply_up', '指令响应上行', '/aixot', 'up', '{gatewaySn}/command/reply', TRUE, 6),
+('device_register_up', '设备注册上行', '/aixot', 'up', '{gatewaySn}/device/register', TRUE, 7),
+('device_register_down_ack', '设备注册响应下行', '/aixot', 'down', '{gatewaySn}/device/register/ack', TRUE, 8),
+('device_data_up', '设备数据上报', '/aixot', 'up', '{gatewaySn}/{deviceSn}/data', TRUE, 9),
+('device_cmd_down', '设备指令下行', '/aixot', 'down', '{gatewaySn}/{deviceSn}/command', TRUE, 10),
+('device_cmd_reply_up', '设备指令响应上行', '/aixot', 'up', '{gatewaySn}/{deviceSn}/command/reply', TRUE, 11);
 
 -- 设备表
 CREATE TABLE IF NOT EXISTS device (

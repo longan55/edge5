@@ -44,6 +44,8 @@ func run() error {
 		return fmt.Errorf("数据库迁移失败: %w", err)
 	}
 
+	initDefaultTopics()
+
 	if err := initCache(); err != nil {
 		global.Logger.Warn("初始化缓存失败，将跳过缓存（联调模式）", zap.Error(err))
 		global.CacheDB = nil
@@ -109,7 +111,36 @@ func autoMigrate() error {
 		&model.Device{},
 		&model.DeviceStatus{},
 		&model.ProtocolRegistry{},
+		&model.MQTTConfig{},
+		&model.MQTTTopicTemplate{},
+		&model.MQTTTopicConfig{},
 	)
+}
+
+func initDefaultTopics() {
+	var count int64
+	global.DB.Model(&model.MQTTTopicTemplate{}).Count(&count)
+	if count == 0 {
+		defaults := repository.GetDefaultTopics()
+		for _, t := range defaults {
+			global.DB.Create(t)
+		}
+		global.Logger.Info("已初始化默认MQTT主题模板")
+	}
+
+	var configCount int64
+	global.DB.Model(&model.MQTTTopicConfig{}).Where("gateway_sn = ?", config.CONFIG.Gateway.SN).Count(&configCount)
+	if configCount == 0 {
+		defaultConfig := &model.MQTTTopicConfig{
+			Prefix:        "/aixot",
+			UpKeyword:     "up",
+			DownKeyword:   "down",
+			ShowDirection: true,
+			GatewaySN:     config.CONFIG.Gateway.SN,
+		}
+		global.DB.Create(defaultConfig)
+		global.Logger.Info("已初始化默认MQTT主题配置")
+	}
 }
 
 func initCache() error {
@@ -130,6 +161,7 @@ func initPlugin() error {
 }
 
 func initMQTT() error {
+	global.Logger.Info("初始化MQTT：开始规范化配置表")
 	if err := normalizeMQTTConfigTable(); err != nil {
 		global.Logger.Warn("MQTT 配置表规范化失败，将继续按现有数据尝试连接", zap.Error(err))
 	}
@@ -137,10 +169,12 @@ func initMQTT() error {
 	mqttRepo := repository.NewMQTTConfigRepository(global.DB)
 	cfg, err := mqttRepo.Get()
 	if err != nil {
+		global.Logger.Error("MQTT 配置读取失败", zap.Error(err))
 		return err
 	}
 
 	if cfg == nil {
+		global.Logger.Info("数据库中无MQTT配置，使用配置文件(yaml)默认值连接")
 		global.MQTTClient = global.NewMqttClient()
 		if err := global.MQTTClient.Connect(); err != nil {
 			global.Logger.Warn("MQTT 初始连接失败，将依赖自动重连", zap.Error(err))
@@ -148,23 +182,52 @@ func initMQTT() error {
 		}
 
 		if waitMQTTConnected(6*time.Second, 500*time.Millisecond) {
+			global.Logger.Info("MQTT 初始连接成功，写入数据库")
 			_ = mqttRepo.Create(&model.MQTTConfig{
-				Broker:    config.CONFIG.MQTT.Broker,
-				Port:      config.CONFIG.MQTT.Port,
-				Username:  config.CONFIG.MQTT.Username,
-				Password:  config.CONFIG.MQTT.Password,
-				ClientID:  config.CONFIG.MQTT.ClientID,
-				KeepAlive: config.CONFIG.MQTT.KeepAlive,
-				QoS:       int8(config.CONFIG.MQTT.QoS),
-				On:        true,
-				GatewaySN: config.CONFIG.Gateway.SN,
-				CreatedAt: time.Time{},
-				UpdatedAt: time.Time{},
+				Broker:              config.CONFIG.MQTT.Broker,
+				Protocol:            config.CONFIG.MQTT.Protocol,
+				Host:                config.CONFIG.MQTT.Host,
+				Port:                config.CONFIG.MQTT.Port,
+				Username:            config.CONFIG.MQTT.Username,
+				Password:            config.CONFIG.MQTT.Password,
+				ClientID:            config.CONFIG.MQTT.ClientID,
+				KeepAlive:           config.CONFIG.MQTT.KeepAlive,
+				QoS:                 int8(config.CONFIG.MQTT.QoS),
+				On:                  true,
+				GatewaySN:           config.CONFIG.Gateway.SN,
+				SSL:                 config.CONFIG.MQTT.SSL,
+				SSLVerify:           config.CONFIG.MQTT.SSLVerify,
+				ALPNTag:             config.CONFIG.MQTT.ALPNTag,
+				CertType:            config.CONFIG.MQTT.CertType,
+				CAFile:              config.CONFIG.MQTT.CAFile,
+				CertFile:            config.CONFIG.MQTT.CertFile,
+				KeyFile:             config.CONFIG.MQTT.KeyFile,
+				Version:             config.CONFIG.MQTT.Version,
+				ConnectTimeout:      config.CONFIG.MQTT.ConnectTimeout,
+				AutoReconnect:       config.CONFIG.MQTT.AutoReconnect,
+				ReconnectPeriod:     config.CONFIG.MQTT.ReconnectPeriod,
+				CleanStart:          config.CONFIG.MQTT.CleanStart,
+				SessionExpiry:       config.CONFIG.MQTT.SessionExpiry,
+				ReceiveMax:          config.CONFIG.MQTT.ReceiveMax,
+				MaxPacketSize:       config.CONFIG.MQTT.MaxPacketSize,
+				TopicAliasMax:       config.CONFIG.MQTT.TopicAliasMax,
+				RequestResponseInfo: config.CONFIG.MQTT.RequestResponse,
+				RequestProblemInfo:  config.CONFIG.MQTT.RequestProblem,
+				CreatedAt:           time.Time{},
+				UpdatedAt:           time.Time{},
 			})
+		} else {
+			global.Logger.Warn("MQTT 初始连接超时（6秒内未连接成功）")
 		}
 		return nil
 	}
 
+	global.Logger.Info("MQTT 配置已从数据库加载",
+		zap.Bool("on", cfg.On),
+		zap.String("protocol", cfg.Protocol),
+		zap.String("host", cfg.Host),
+		zap.Int("port", cfg.Port),
+	)
 	syncMQTTToGlobal(cfg)
 
 	if !cfg.On {
@@ -172,20 +235,26 @@ func initMQTT() error {
 		return nil
 	}
 
+	global.Logger.Info("MQTT on=true，开始自动连接")
 	global.MQTTClient = global.NewMqttClient()
 	if err := global.MQTTClient.Connect(); err != nil {
 		global.Logger.Warn("MQTT 初始连接失败，将依赖自动重连", zap.Error(err))
 	}
 
 	if waitMQTTConnected(6*time.Second, 500*time.Millisecond) {
+		global.Logger.Info("MQTT 自动连接成功")
 		cfg.On = true
 		_ = mqttRepo.Update(cfg)
+	} else {
+		global.Logger.Warn("MQTT 自动连接超时（6秒内未连接成功）")
 	}
 
 	return nil
 }
 
 func syncMQTTToGlobal(cfg *model.MQTTConfig) {
+	config.CONFIG.MQTT.Protocol = cfg.Protocol
+	config.CONFIG.MQTT.Host = cfg.Host
 	config.CONFIG.MQTT.Broker = cfg.Broker
 	config.CONFIG.MQTT.Port = cfg.Port
 	config.CONFIG.MQTT.Username = cfg.Username
@@ -193,6 +262,33 @@ func syncMQTTToGlobal(cfg *model.MQTTConfig) {
 	config.CONFIG.MQTT.ClientID = cfg.ClientID
 	config.CONFIG.MQTT.KeepAlive = cfg.KeepAlive
 	config.CONFIG.MQTT.QoS = byte(cfg.QoS)
+	config.CONFIG.MQTT.SSL = cfg.SSL
+	config.CONFIG.MQTT.SSLVerify = cfg.SSLVerify
+	config.CONFIG.MQTT.ALPNTag = cfg.ALPNTag
+	config.CONFIG.MQTT.CertType = cfg.CertType
+	config.CONFIG.MQTT.CAFile = cfg.CAFile
+	config.CONFIG.MQTT.CertFile = cfg.CertFile
+	config.CONFIG.MQTT.KeyFile = cfg.KeyFile
+	config.CONFIG.MQTT.Version = cfg.Version
+	config.CONFIG.MQTT.ConnectTimeout = cfg.ConnectTimeout
+	config.CONFIG.MQTT.AutoReconnect = cfg.AutoReconnect
+	config.CONFIG.MQTT.ReconnectPeriod = cfg.ReconnectPeriod
+	config.CONFIG.MQTT.CleanStart = cfg.CleanStart
+	config.CONFIG.MQTT.SessionExpiry = cfg.SessionExpiry
+	config.CONFIG.MQTT.ReceiveMax = cfg.ReceiveMax
+	config.CONFIG.MQTT.MaxPacketSize = cfg.MaxPacketSize
+	config.CONFIG.MQTT.TopicAliasMax = cfg.TopicAliasMax
+	config.CONFIG.MQTT.RequestResponse = cfg.RequestResponseInfo
+	config.CONFIG.MQTT.RequestProblem = cfg.RequestProblemInfo
+
+	global.Logger.Info("MQTT配置已从数据库同步到全局",
+		zap.String("protocol", cfg.Protocol),
+		zap.String("host", cfg.Host),
+		zap.Int("port", cfg.Port),
+		zap.Bool("ssl", cfg.SSL),
+		zap.String("version", cfg.Version),
+		zap.Bool("auto_reconnect", cfg.AutoReconnect),
+	)
 }
 
 func waitMQTTConnected(timeout time.Duration, pollInterval time.Duration) bool {
