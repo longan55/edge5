@@ -30,26 +30,122 @@ func (h *MQTTHandler) GetConfig(c *gin.Context) {
 
 	if cfg == nil {
 		cfg = &model.MQTTConfig{
-			Broker:    config.CONFIG.MQTT.Broker,
-			Port:      config.CONFIG.MQTT.Port,
-			Username:  config.CONFIG.MQTT.Username,
-			Password:  config.CONFIG.MQTT.Password,
-			ClientID:  config.CONFIG.MQTT.ClientID,
-			KeepAlive: config.CONFIG.MQTT.KeepAlive,
-			QoS:       int8(config.CONFIG.MQTT.QoS),
-			On:        false,
-			GatewaySN: config.CONFIG.Gateway.SN,
-			CreatedAt: time.Time{},
-			UpdatedAt: time.Time{},
+			Broker:              config.CONFIG.MQTT.Broker,
+			Protocol:            "mqtt://",
+			Host:                "",
+			Port:                config.CONFIG.MQTT.Port,
+			Username:            config.CONFIG.MQTT.Username,
+			Password:            config.CONFIG.MQTT.Password,
+			ClientID:            config.CONFIG.MQTT.ClientID,
+			KeepAlive:           config.CONFIG.MQTT.KeepAlive,
+			QoS:                 int8(config.CONFIG.MQTT.QoS),
+			On:                  false,
+			GatewaySN:           config.CONFIG.Gateway.SN,
+			CreatedAt:           time.Time{},
+			UpdatedAt:           time.Time{},
+			SSL:                 false,
+			SSLVerify:           true,
+			ALPNTag:             "",
+			CertType:            "",
+			CAFile:              "",
+			CertFile:            "",
+			KeyFile:             "",
+			Version:             "5.0",
+			ConnectTimeout:      10,
+			AutoReconnect:       true,
+			ReconnectPeriod:     4000,
+			CleanStart:          false,
+			SessionExpiry:       7200,
+			ReceiveMax:          0,
+			MaxPacketSize:       0,
+			TopicAliasMax:       0,
+			RequestResponseInfo: false,
+			RequestProblemInfo:  false,
 		}
 	}
 
-	// 确保网关序列号总是有值（避免数据库 not null / uniqueIndex 冲突）
 	if cfg.GatewaySN == "" {
 		cfg.GatewaySN = config.CONFIG.Gateway.SN
 	}
 
-	response.Success(c, cfg)
+	type ResponseConfig struct {
+		ID                  uint64    `json:"id"`
+		Broker              string    `json:"broker"`
+		Protocol            string    `json:"protocol"`
+		Host                string    `json:"host"`
+		Port                int       `json:"port"`
+		Username            string    `json:"username"`
+		Password            string    `json:"password"`
+		ClientID            string    `json:"client_id"`
+		KeepAlive           int       `json:"keep_alive"`
+		QoS                 int8      `json:"qos"`
+		On                  bool      `json:"on"`
+		GatewaySN           string    `json:"gateway_sn"`
+		CreatedAt           time.Time `json:"created_at"`
+		UpdatedAt           time.Time `json:"updated_at"`
+		SSL                 bool      `json:"ssl"`
+		SSLVerify           bool      `json:"ssl_verify"`
+		ALPNTag             string    `json:"alpn_tag"`
+		CertType            string    `json:"cert_type"`
+		CAFile              string    `json:"ca_file"`
+		CertFile            string    `json:"cert_file"`
+		KeyFile             string    `json:"key_file"`
+		Version             string    `json:"version"`
+		ConnectTimeout      int       `json:"connect_timeout"`
+		AutoReconnect       bool      `json:"auto_reconnect"`
+		ReconnectPeriod     int       `json:"reconnect_period"`
+		CleanStart          bool      `json:"clean_start"`
+		SessionExpiry       int       `json:"session_expiry"`
+		ReceiveMax          *int      `json:"receive_max,omitempty"`
+		MaxPacketSize       *int      `json:"max_packet_size,omitempty"`
+		TopicAliasMax       *int      `json:"topic_alias_max,omitempty"`
+		RequestResponseInfo bool      `json:"request_response_info"`
+		RequestProblemInfo  bool      `json:"request_problem_info"`
+	}
+
+	resp := ResponseConfig{
+		ID:                  cfg.ID,
+		Broker:              cfg.Broker,
+		Protocol:            cfg.Protocol,
+		Host:                cfg.Host,
+		Port:                cfg.Port,
+		Username:            cfg.Username,
+		Password:            cfg.Password,
+		ClientID:            cfg.ClientID,
+		KeepAlive:           cfg.KeepAlive,
+		QoS:                 cfg.QoS,
+		On:                  cfg.On,
+		GatewaySN:           cfg.GatewaySN,
+		CreatedAt:           cfg.CreatedAt,
+		UpdatedAt:           cfg.UpdatedAt,
+		SSL:                 cfg.SSL,
+		SSLVerify:           cfg.SSLVerify,
+		ALPNTag:             cfg.ALPNTag,
+		CertType:            cfg.CertType,
+		CAFile:              cfg.CAFile,
+		CertFile:            cfg.CertFile,
+		KeyFile:             cfg.KeyFile,
+		Version:             cfg.Version,
+		ConnectTimeout:      cfg.ConnectTimeout,
+		AutoReconnect:       cfg.AutoReconnect,
+		ReconnectPeriod:     cfg.ReconnectPeriod,
+		CleanStart:          cfg.CleanStart,
+		SessionExpiry:       cfg.SessionExpiry,
+		RequestResponseInfo: cfg.RequestResponseInfo,
+		RequestProblemInfo:  cfg.RequestProblemInfo,
+	}
+
+	if cfg.ReceiveMax > 0 {
+		resp.ReceiveMax = &cfg.ReceiveMax
+	}
+	if cfg.MaxPacketSize > 0 {
+		resp.MaxPacketSize = &cfg.MaxPacketSize
+	}
+	if cfg.TopicAliasMax > 0 {
+		resp.TopicAliasMax = &cfg.TopicAliasMax
+	}
+
+	response.Success(c, resp)
 }
 
 func (h *MQTTHandler) UpdateConfig(c *gin.Context) {
@@ -86,12 +182,32 @@ func (h *MQTTHandler) GetStatus(c *gin.Context) {
 
 func (h *MQTTHandler) syncToGlobalConfig(req *model.MQTTConfig) {
 	config.CONFIG.MQTT.Broker = req.Broker
+	config.CONFIG.MQTT.Protocol = req.Protocol
+	config.CONFIG.MQTT.Host = req.Host
 	config.CONFIG.MQTT.Port = req.Port
 	config.CONFIG.MQTT.Username = req.Username
 	config.CONFIG.MQTT.Password = req.Password
 	config.CONFIG.MQTT.ClientID = req.ClientID
 	config.CONFIG.MQTT.KeepAlive = req.KeepAlive
 	config.CONFIG.MQTT.QoS = byte(req.QoS)
+	config.CONFIG.MQTT.SSL = req.SSL
+	config.CONFIG.MQTT.SSLVerify = req.SSLVerify
+	config.CONFIG.MQTT.ALPNTag = req.ALPNTag
+	config.CONFIG.MQTT.CertType = req.CertType
+	config.CONFIG.MQTT.CAFile = req.CAFile
+	config.CONFIG.MQTT.CertFile = req.CertFile
+	config.CONFIG.MQTT.KeyFile = req.KeyFile
+	config.CONFIG.MQTT.Version = req.Version
+	config.CONFIG.MQTT.ConnectTimeout = req.ConnectTimeout
+	config.CONFIG.MQTT.AutoReconnect = req.AutoReconnect
+	config.CONFIG.MQTT.ReconnectPeriod = req.ReconnectPeriod
+	config.CONFIG.MQTT.CleanStart = req.CleanStart
+	config.CONFIG.MQTT.SessionExpiry = req.SessionExpiry
+	config.CONFIG.MQTT.ReceiveMax = req.ReceiveMax
+	config.CONFIG.MQTT.MaxPacketSize = req.MaxPacketSize
+	config.CONFIG.MQTT.TopicAliasMax = req.TopicAliasMax
+	config.CONFIG.MQTT.RequestResponse = req.RequestResponseInfo
+	config.CONFIG.MQTT.RequestProblem = req.RequestProblemInfo
 }
 
 func (h *MQTTHandler) rebuildClient() {

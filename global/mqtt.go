@@ -1,7 +1,11 @@
 package global
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
+	"os"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -18,7 +22,6 @@ func NewMqttClient() *myMqttClient {
 	return &myMqttClient{}
 }
 
-// TODO: 新增更多高级连接配置
 func (my *myMqttClient) Connect() error {
 	if my.init {
 		if my.connected {
@@ -28,7 +31,10 @@ func (my *myMqttClient) Connect() error {
 		}
 	}
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker(CONFIG.MQTT.Broker)
+
+	broker := buildBrokerAddress()
+	opts.AddBroker(broker)
+
 	clientID := CONFIG.MQTT.ClientID
 	if clientID == "" {
 		clientID = CONFIG.Gateway.SN + "-edge5"
@@ -37,10 +43,20 @@ func (my *myMqttClient) Connect() error {
 
 	opts.SetUsername(CONFIG.MQTT.Username)
 	opts.SetPassword(CONFIG.MQTT.Password)
-	opts.SetCleanSession(false) // 持久会话，离线消息不丢失
-	opts.SetAutoReconnect(true)
-	opts.SetConnectRetry(true)
-	opts.SetConnectRetryInterval(5 * time.Second)
+
+	if CONFIG.MQTT.Version == "5.0" {
+		opts.SetProtocolVersion(5)
+	} else {
+		opts.SetProtocolVersion(4)
+	}
+
+	if CONFIG.MQTT.ConnectTimeout > 0 {
+		opts.SetConnectTimeout(time.Duration(CONFIG.MQTT.ConnectTimeout) * time.Second)
+	} else {
+		opts.SetConnectTimeout(10 * time.Second)
+	}
+
+	opts.SetCleanSession(CONFIG.MQTT.CleanStart)
 
 	keepAliveSec := CONFIG.MQTT.KeepAlive
 	if keepAliveSec <= 0 {
@@ -50,21 +66,34 @@ func (my *myMqttClient) Connect() error {
 
 	opts.SetPingTimeout(10 * time.Second)
 
-	// 可选：配置连接丢失时的行为
+	opts.SetAutoReconnect(CONFIG.MQTT.AutoReconnect)
+	opts.SetConnectRetry(CONFIG.MQTT.AutoReconnect)
+	if CONFIG.MQTT.ReconnectPeriod > 0 {
+		opts.SetConnectRetryInterval(time.Duration(CONFIG.MQTT.ReconnectPeriod) * time.Millisecond)
+	} else {
+		opts.SetConnectRetryInterval(5 * time.Second)
+	}
+
+	if CONFIG.MQTT.SSL {
+		tlsConfig, err := buildTLSConfig()
+		if err != nil {
+			return fmt.Errorf("build TLS config failed: %w", err)
+		}
+		opts.SetTLSConfig(tlsConfig)
+	}
+
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
 		my.connected = false
-		// 只记录日志，不做其他操作
-		Logger.Warn("MQTT连接丢失，SDK会自动重连", zap.Error(err))
+		Logger.Warn("MQTT连接丢失", zap.Error(err))
 	})
 
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
 		my.connected = true
-		Logger.Info("成功连接到MQTT Broker", zap.String("broker", CONFIG.MQTT.Broker))
+		Logger.Info("成功连接到MQTT Broker", zap.String("broker", broker))
 	})
 
 	my.client = mqtt.NewClient(opts)
 
-	// 初始连接（只需要做一次），避免阻塞 HTTP 启动
 	token := my.client.Connect()
 	if ok := token.WaitTimeout(3 * time.Second); !ok {
 		Logger.Warn("初始连接超时，HTTP 将继续启动（MQTT 依赖自动重连）")
@@ -72,12 +101,62 @@ func (my *myMqttClient) Connect() error {
 		return nil
 	}
 	if token.Error() != nil {
-		// 即使这里连接失败，AutoReconnect=true也会在后台重试
 		Logger.Warn("初始连接失败，SDK会自动重连", zap.Error(token.Error()))
 	}
 
 	my.init = true
 	return token.Error()
+}
+
+func buildBrokerAddress() string {
+	protocol := CONFIG.MQTT.Protocol
+	if protocol == "" {
+		protocol = "mqtt://"
+	}
+	host := CONFIG.MQTT.Host
+	if host == "" {
+		host = CONFIG.MQTT.Broker
+	}
+	port := CONFIG.MQTT.Port
+	if port <= 0 {
+		port = 1883
+		if protocol == "mqtts://" {
+			port = 8883
+		}
+	}
+	return fmt.Sprintf("%s%s:%d", protocol, host, port)
+}
+
+func buildTLSConfig() (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: !CONFIG.MQTT.SSLVerify,
+	}
+
+	if CONFIG.MQTT.ALPNTag != "" {
+		tlsConfig.NextProtos = []string{CONFIG.MQTT.ALPNTag}
+	}
+
+	if CONFIG.MQTT.CertType == "self_signed" {
+		if CONFIG.MQTT.CAFile != "" {
+			caCert, err := os.ReadFile(CONFIG.MQTT.CAFile)
+			if err != nil {
+				return nil, fmt.Errorf("read CA file failed: %w", err)
+			}
+			caCertPool := x509.NewCertPool()
+			caCertPool.AppendCertsFromPEM(caCert)
+			tlsConfig.RootCAs = caCertPool
+		}
+
+		if CONFIG.MQTT.CertFile != "" && CONFIG.MQTT.KeyFile != "" {
+			cert, err := tls.LoadX509KeyPair(CONFIG.MQTT.CertFile, CONFIG.MQTT.KeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("load cert/key pair failed: %w", err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+	}
+
+	return tlsConfig, nil
 }
 
 func (my *myMqttClient) Close() error {
