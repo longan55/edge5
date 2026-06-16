@@ -92,6 +92,7 @@ func SetupRouter(mode string) *gin.Engine {
 				deviceGroup.DELETE("/:id", deviceHandler.Delete)
 				deviceGroup.POST("/:id/start", deviceHandler.Start)
 				deviceGroup.POST("/:id/stop", deviceHandler.Stop)
+				deviceGroup.POST("/test-connections", handler.NewDeviceInitHandler().TestConnections)
 			}
 
 			// 采集任务

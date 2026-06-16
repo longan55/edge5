@@ -16,8 +16,24 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	lastTestTime time.Time
+	testMutex    sync.Mutex
+	testCooldown = 30 * time.Second // 30秒冷却时间
+)
+
 // TestDeviceConnections 异步测试所有设备连接
-func TestDeviceConnections() {
+func TestDeviceConnections() error {
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
+	// 检查冷却时间
+	if time.Since(lastTestTime) < testCooldown {
+		return fmt.Errorf("操作过于频繁，请等待 %d 秒后再试", int(testCooldown.Seconds()-time.Since(lastTestTime).Seconds()))
+	}
+
+	lastTestTime = time.Now()
+
 	go func() {
 		global.Logger.Info("开始异步测试设备连接...")
 
@@ -63,6 +79,7 @@ func TestDeviceConnections() {
 		wg.Wait()
 		global.Logger.Info("所有设备连接测试完成")
 	}()
+	return nil
 }
 
 // testSingleDeviceConnection 测试单个设备连接

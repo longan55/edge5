@@ -22,6 +22,17 @@
               <div class="stat-title">正常设备</div>
               <div class="stat-value">{{ stats.deviceOnline }}</div>
             </div>
+          <div class="stat-action">
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="isTesting"
+              :loading="isTesting"
+              @click="testDeviceConnections"
+            >
+              {{ isTesting ? '检测中...' : reloadButtonText }}
+            </el-button>
+          </div>
             <div class="stat-icon">
               <el-icon :size="40" color="#67C23A"><CircleCheck /></el-icon>
             </div>
@@ -109,6 +120,10 @@ const stats = ref({
 
 const mqttConnected = ref(false)
 const uptime = ref('0天 0时 0分')
+const isTesting = ref(false)
+const reloadButtonText = ref('重新加载')
+const lastTestTime = ref(0)
+const cooldownTime = 30 // 30秒冷却时间
 
 const activities = ref([
   { content: '系统启动', timestamp: new Date().toLocaleString() }
@@ -161,6 +176,60 @@ const updateUptime = () => {
   fetchStats()
 }
 
+// 测试设备连接
+const testDeviceConnections = async () => {
+  const now = Math.floor(Date.now() / 1000)
+  const timeSinceLastTest = now - lastTestTime.value
+
+  // 检查冷却时间
+  if (timeSinceLastTest < cooldownTime && lastTestTime.value !== 0) {
+    const remainingSeconds = cooldownTime - timeSinceLastTest
+    return
+  }
+
+  isTesting.value = true
+  try {
+    await request.post('/device/test-connections')
+    lastTestTime.value = now
+
+    // 刷新设备列表
+    await fetchStats()
+
+    // 开始倒计时
+    startCooldown()
+
+    // 添加活动记录
+    activities.value.unshift({
+      content: '设备连接检测已完成',
+      timestamp: new Date().toLocaleString()
+    })
+  } catch (error) {
+    console.error('测试设备连接失败:', error)
+    const errorMsg = error.response?.data?.message || '检测失败'
+    // 添加错误活动记录
+    activities.value.unshift({
+      content: `设备连接检测失败: ${errorMsg}`,
+      timestamp: new Date().toLocaleString()
+    })
+  } finally {
+    isTesting.value = false
+  }
+}
+
+// 开始倒计时
+const startCooldown = () => {
+  let remainingSeconds = cooldownTime
+  const timer = setInterval(() => {
+    remainingSeconds--
+    reloadButtonText.value = `重新加载 (${remainingSeconds}s)`
+
+    if (remainingSeconds <= 0) {
+      clearInterval(timer)
+      reloadButtonText.value = '重新加载'
+    }
+  }, 1000)
+}
+
 onMounted(() => {
   fetchStats()
   setInterval(fetchStats, 30000)
@@ -194,6 +263,11 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.stat-action {
+  margin-top: 10px;
+  text-align: center;
 }
 
 .stat-title {
