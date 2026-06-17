@@ -10,7 +10,7 @@
 
       <el-form inline @submit.prevent>
         <el-form-item label="设备类型">
-          <el-select v-model="filters.deviceType" placeholder="全部" clearable>
+          <el-select v-model="filters.deviceType" placeholder="全部" clearable style="width: 200px">
             <el-option
               v-for="dt in deviceOptions.deviceTypes"
               :key="dt.value"
@@ -21,7 +21,7 @@
         </el-form-item>
 
         <el-form-item label="品牌">
-          <el-select v-model="filters.brand" placeholder="全部" clearable>
+          <el-select v-model="filters.brand" placeholder="全部" clearable style="width: 200px">
             <el-option
               v-for="b in allBrandOptions"
               :key="b.value"
