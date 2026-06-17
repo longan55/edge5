@@ -18,10 +18,11 @@ type MQTTConfig struct {
 	ClientID  string    `gorm:"size:64;not null" json:"client_id"`
 	KeepAlive int       `gorm:"default:60" json:"keep_alive"`
 	QoS       int8      `gorm:"default:1" json:"qos"`
-	On        bool      `gorm:"default:false" json:"on"`
-	GatewaySN string    `gorm:"size:64;uniqueIndex;not null" json:"gateway_sn"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	On                  bool      `gorm:"default:false" json:"on"`
+	Registered          bool      `gorm:"default:false" json:"registered"`
+	GatewaySN           string    `gorm:"size:64;uniqueIndex;not null" json:"gateway_sn"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 
 	// SSL/TLS settings
 	SSL       bool   `gorm:"default:false" json:"ssl"`

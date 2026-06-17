@@ -94,13 +94,13 @@ func (r *MQTTConfigRepository) Create(cfg *model.MQTTConfig) error {
 }
 
 // Update 确保 mqtt_config 只保留第一条记录：覆盖第一条并删除其余行
+// 注意：保留原有记录的 registered 字段值，避免更新配置时丢失注册状态
 func (r *MQTTConfigRepository) Update(cfg *model.MQTTConfig) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var first model.MQTTConfig
 		err := tx.Order("id asc").First(&first).Error
 		if err != nil {
 			if err == gorm.ErrRecordNotFound {
-				// 表为空：创建第一条
 				if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Where("1 = 1").Delete(&model.MQTTConfig{}).Error; err != nil {
 					return err
 				}
@@ -108,6 +108,9 @@ func (r *MQTTConfigRepository) Update(cfg *model.MQTTConfig) error {
 			}
 			return err
 		}
+
+		// 保留原有记录的注册状态
+		cfg.Registered = first.Registered
 
 		// 覆盖第一条
 		cfg.ID = first.ID
@@ -121,6 +124,15 @@ func (r *MQTTConfigRepository) Update(cfg *model.MQTTConfig) error {
 		}
 		return nil
 	})
+}
+
+// UpdateRegistered 单独更新 registered 字段（使用原生 SQL 确保兼容 SQLite）
+func (r *MQTTConfigRepository) UpdateRegistered(registered bool) error {
+	val := 0
+	if registered {
+		val = 1
+	}
+	return r.db.Exec("UPDATE mqtt_config SET registered = ? WHERE id = (SELECT id FROM mqtt_config ORDER BY id ASC LIMIT 1)", val).Error
 }
 
 type DeviceRepository struct {

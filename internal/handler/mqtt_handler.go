@@ -475,3 +475,29 @@ func (h *MQTTHandler) ResetTopicConfig(c *gin.Context) {
 	global.Logger.Info("Handler.ResetTopicConfig: 恢复成功")
 	response.Success(c, defaultCfg)
 }
+
+// ReloadTopicConfig 热更新主题配置
+func (h *MQTTHandler) ReloadTopicConfig(c *gin.Context) {
+	global.Logger.Info("Handler.ReloadTopicConfig: 收到热更新请求")
+
+	if global.MQTTBusinessService == nil {
+		global.Logger.Warn("Handler.ReloadTopicConfig: MQTT业务服务未初始化")
+		response.Error(c, response.CodeError, "MQTT业务服务未初始化")
+		return
+	}
+
+	if global.MQTTClient == nil || !global.MQTTClient.IsConnected() {
+		global.Logger.Warn("Handler.ReloadTopicConfig: MQTT未连接")
+		response.Error(c, response.CodeError, "MQTT未连接，无法热更新订阅")
+		return
+	}
+
+	if err := global.MQTTBusinessService.ReloadConfig(); err != nil {
+		global.Logger.Error("Handler.ReloadTopicConfig: 热更新失败", zap.Error(err))
+		response.Error(c, response.CodeError, "热更新失败")
+		return
+	}
+
+	global.Logger.Info("Handler.ReloadTopicConfig: 热更新成功")
+	response.Success(c, nil)
+}

@@ -263,7 +263,7 @@
 <script setup>
 import { ref, reactive, onMounted, watch, nextTick } from 'vue'
 import request from '@/utils/request'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const form = reactive({
   broker: '',
@@ -502,15 +502,33 @@ const fetchTopics = async () => {
 
 const handleSaveTopics = async () => {
   try {
-    await Promise.all([
-      request.put('/mqtt/topic-config', topicConfig),
-      request.put('/mqtt/topics', topics.value.map(t => ({
-        ...t,
-        is_default: false
-      })))
-    ])
-    ElMessage.success('主题配置已保存')
+    // 显示确认框
+    await ElMessageBox.confirm(
+      '订阅新主题，旧主题将失效！',
+      '保存主题配置',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+
+    // 保存主题配置（串行调用避免SQLite锁冲突）
+    await request.put('/mqtt/topic-config', topicConfig)
+    await request.put('/mqtt/topics', topics.value.map(t => ({
+      ...t,
+      is_default: false
+    })))
+    
+    // 调用热更新 API
+    await request.post('/mqtt/topic-config/reload')
+    
+    ElMessage.success('主题配置已保存并热更新')
   } catch (error) {
+    if (error === 'cancel') {
+      // 用户取消
+      return
+    }
     console.error('保存主题失败:', error)
     ElMessage.error('保存主题失败')
   }

@@ -197,6 +197,7 @@ func initMQTT() error {
 				KeepAlive:           config.CONFIG.MQTT.KeepAlive,
 				QoS:                 int8(config.CONFIG.MQTT.QoS),
 				On:                  true,
+				Registered:          false, // 首次创建时注册状态为未注册
 				GatewaySN:           config.CONFIG.Gateway.SN,
 				SSL:                 config.CONFIG.MQTT.SSL,
 				SSLVerify:           config.CONFIG.MQTT.SSLVerify,
@@ -227,6 +228,7 @@ func initMQTT() error {
 
 	global.Logger.Info("MQTT 配置已从数据库加载",
 		zap.Bool("on", cfg.On),
+		zap.Bool("registered", cfg.Registered),
 		zap.String("protocol", cfg.Protocol),
 		zap.String("host", cfg.Host),
 		zap.Int("port", cfg.Port),
@@ -332,9 +334,26 @@ func waitForSignal() {
 }
 
 func startMQTTBusiness() {
+	// 从数据库加载之前的注册状态
+	mqttRepo := repository.NewMQTTConfigRepository(global.DB)
+	cfg, err := mqttRepo.Get()
+	if err != nil {
+		global.Logger.Warn("加载网关注册状态失败", zap.Error(err))
+		global.SetGatewayRegistered(false)
+	} else if cfg != nil {
+		global.SetGatewayRegistered(cfg.Registered)
+		global.Logger.Info("加载网关注册状态", zap.Bool("registered", cfg.Registered))
+	} else {
+		global.SetGatewayRegistered(false)
+		global.Logger.Info("数据库中无MQTT配置，注册状态初始化为未注册")
+	}
+
 	deviceRepo := repository.NewDeviceRepository(global.DB)
 	deviceStatusRepo := repository.NewDeviceStatusRepository(global.DB)
-	mqttBusiness := service.NewMQTTBusinessService(deviceRepo, deviceStatusRepo, global.Logger)
+	mqttBusiness := service.NewMQTTBusinessService(deviceRepo, deviceStatusRepo, mqttRepo, global.Logger)
+
+	// 保存到全局变量（用于热更新）
+	global.MQTTBusinessService = mqttBusiness
 
 	go mqttBusiness.Start()
 

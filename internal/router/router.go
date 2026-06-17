@@ -87,6 +87,8 @@ func SetupRouter(mode string) *gin.Engine {
 				mqttGroup.GET("/topic-config", mqttHandler.GetTopicConfig)
 				mqttGroup.PUT("/topic-config", mqttHandler.SaveTopicConfig)
 				mqttGroup.POST("/topic-config/reset", mqttHandler.ResetTopicConfig)
+				// 热更新主题配置
+				mqttGroup.POST("/topic-config/reload", mqttHandler.ReloadTopicConfig)
 			}
 
 			// device add options (deviceTypes + protocolOptions)
