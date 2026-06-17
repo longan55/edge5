@@ -140,7 +140,7 @@ INSERT OR IGNORE INTO
     )
 VALUES (
         'register_up',
-        '注册上行',
+        '注册',
         '/aixot',
         'up',
         'gateway/register',
@@ -149,7 +149,7 @@ VALUES (
     ),
     (
         'register_down_ack',
-        '注册响应下行',
+        '注册响应',
         '/aixot',
         'down',
         'gateway/register/ack',
@@ -158,7 +158,7 @@ VALUES (
     ),
     (
         'heartbeat_up',
-        '心跳上行',
+        '心跳',
         '/aixot',
         'up',
         '{gatewaySn}/heartbeat',
@@ -167,7 +167,7 @@ VALUES (
     ),
     (
         'gateway_status_up',
-        '网关状态上行',
+        '网关状态',
         '/aixot',
         'up',
         '{gatewaySn}/properties',
@@ -176,7 +176,7 @@ VALUES (
     ),
     (
         'gateway_cmd_down',
-        '网关指令下行',
+        '网关指令',
         '/aixot',
         'down',
         '{gatewaySn}/command',
@@ -185,7 +185,7 @@ VALUES (
     ),
     (
         'cmd_reply_up',
-        '指令响应上行',
+        '指令响应',
         '/aixot',
         'up',
         '{gatewaySn}/command/reply',
@@ -194,7 +194,7 @@ VALUES (
     ),
     (
         'device_register_up',
-        '设备注册上行',
+        '设备注册',
         '/aixot',
         'up',
         '{gatewaySn}/device/register',
@@ -203,7 +203,7 @@ VALUES (
     ),
     (
         'device_register_down_ack',
-        '设备注册响应下行',
+        '设备注册响应',
         '/aixot',
         'down',
         '{gatewaySn}/device/register/ack',
@@ -221,7 +221,7 @@ VALUES (
     ),
     (
         'device_cmd_down',
-        '设备指令下行',
+        '设备指令',
         '/aixot',
         'down',
         '{gatewaySn}/{deviceSn}/command',
@@ -230,7 +230,7 @@ VALUES (
     ),
     (
         'device_cmd_reply_up',
-        '设备指令响应上行',
+        '设备指令响应',
         '/aixot',
         'up',
         '{gatewaySn}/{deviceSn}/command/reply',

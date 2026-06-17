@@ -231,10 +231,9 @@
         </el-table-column>
         <el-table-column label="方向" width="90">
           <template #default="{ row }">
-            <el-select v-model="row.direction" size="small">
-              <el-option label="上行" value="up" />
-              <el-option label="下行" value="down" />
-            </el-select>
+            <el-tag :type="row.direction === 'up' ? 'success' : 'primary'" size="small">
+              {{ row.direction === 'up' ? '上行' : '下行' }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="路径模板" min-width="350">
