@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"unsafe"
 
 	pb "edge5/plugins/proto"
 
@@ -193,9 +194,114 @@ func (a *PluginAdapter) IsSupportServer() bool {
 	return false
 }
 
-// ReadBatch 批量读取（直接使用 interface{} 避免循环导入）
+// ReadBatch 批量读取（通过 gRPC 调用插件的 ReadData 接口）
+// 返回 map[string]any 避免循环导入，bridge 会做类型转换
 func (a *PluginAdapter) ReadBatch(ctx context.Context, req interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("ReadBatch not implemented for gRPC plugin adapter")
+	a.mu.RLock()
+	client := a.client
+	a.mu.RUnlock()
+
+	if client == nil {
+		return nil, fmt.Errorf("plugin not initialized")
+	}
+
+	reqMap, ok := req.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("invalid request type: %T", req)
+	}
+
+	pointsRaw, _ := reqMap["Points"].([]interface{})
+	addresses := make([]string, 0, len(pointsRaw))
+	pointMap := make(map[string]map[string]any)
+	for _, p := range pointsRaw {
+		if pointMapItem, ok := p.(map[string]any); ok {
+			name, _ := pointMapItem["Name"].(string)
+			resource, _ := pointMapItem["Resource"].(string)
+			dataType, _ := pointMapItem["DataType"].(string)
+			addresses = append(addresses, resource)
+			pointMap[resource] = map[string]any{
+				"Name":     name,
+				"DataType": dataType,
+			}
+		}
+	}
+
+	resp, err := client.ReadData(ctx, &pb.ReadRequest{
+		Addresses: addresses,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("plugin ReadData error: %w", err)
+	}
+
+	if !resp.GetSuccess() {
+		return nil, fmt.Errorf("plugin ReadData failed: %s", resp.GetMessage())
+	}
+
+	results := make([]interface{}, 0, len(resp.GetValues()))
+	for addr, rawValue := range resp.GetValues() {
+		if p, ok := pointMap[addr]; ok {
+			value := parseRawValue(rawValue, p["DataType"].(string))
+			results = append(results, map[string]any{
+				"PointName": p["Name"],
+				"Value":     value,
+				"Quality":   "good",
+			})
+		}
+	}
+
+	return map[string]any{
+		"Results": results,
+		"Raw":     nil,
+	}, nil
+}
+
+func parseRawValue(raw []byte, dataType string) interface{} {
+	switch dataType {
+	case "bool":
+		return len(raw) > 0 && raw[0] != 0
+	case "short":
+		if len(raw) >= 2 {
+			return int16(raw[0]) | int16(raw[1])<<8
+		}
+	case "ushort":
+		if len(raw) >= 2 {
+			return uint16(raw[0]) | uint16(raw[1])<<8
+		}
+	case "int":
+		if len(raw) >= 4 {
+			return int32(raw[0]) | int32(raw[1])<<8 | int32(raw[2])<<16 | int32(raw[3])<<24
+		}
+	case "uint":
+		if len(raw) >= 4 {
+			return uint32(raw[0]) | uint32(raw[1])<<8 | uint32(raw[2])<<16 | uint32(raw[3])<<24
+		}
+	case "long":
+		if len(raw) >= 8 {
+			return int64(raw[0]) | int64(raw[1])<<8 | int64(raw[2])<<16 | int64(raw[3])<<24 |
+				int64(raw[4])<<32 | int64(raw[5])<<40 | int64(raw[6])<<48 | int64(raw[7])<<56
+		}
+	case "ulong":
+		if len(raw) >= 8 {
+			return uint64(raw[0]) | uint64(raw[1])<<8 | uint64(raw[2])<<16 | uint64(raw[3])<<24 |
+				uint64(raw[4])<<32 | uint64(raw[5])<<40 | uint64(raw[6])<<48 | uint64(raw[7])<<56
+		}
+	case "float":
+		if len(raw) >= 4 {
+			bits := uint32(raw[0]) | uint32(raw[1])<<8 | uint32(raw[2])<<16 | uint32(raw[3])<<24
+			return *(*float32)(unsafe.Pointer(&bits))
+		}
+	case "double":
+		if len(raw) >= 8 {
+			bits := uint64(raw[0]) | uint64(raw[1])<<8 | uint64(raw[2])<<16 | uint64(raw[3])<<24 |
+				uint64(raw[4])<<32 | uint64(raw[5])<<40 | uint64(raw[6])<<48 | uint64(raw[7])<<56
+			return *(*float64)(unsafe.Pointer(&bits))
+		}
+	case "string":
+		return string(raw)
+	default:
+		return string(raw)
+	}
+	return string(raw)
 }
 
 // WriteBatch 批量写入（直接使用 interface{} 避免循环导入）

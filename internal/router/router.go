@@ -115,6 +115,7 @@ func SetupRouter(mode string) *gin.Engine {
 			{
 				taskGroup.GET("/list", taskHandler.ListTasks)
 				taskGroup.GET("/:id", taskHandler.GetTask)
+				taskGroup.GET("/:id/data", taskHandler.GetTaskData)
 				taskGroup.POST("", taskHandler.CreateTask)
 				taskGroup.PUT("/:id", taskHandler.UpdateTask)
 				taskGroup.DELETE("/:id", taskHandler.DeleteTask)

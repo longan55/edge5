@@ -146,11 +146,16 @@ func mapStatusMessage(online bool) string {
 	return "disconnected"
 }
 
-// StartAllTasks 启动所有任务（预留接口）
+// StartAllTasks 启动所有任务
 func StartAllTasks() {
-	// TODO: 任务启动逻辑待设计
-	global.Logger.Info("启动所有任务（预留接口）")
-	// 任务调度、采集任务等将在此处实现
+	scheduler := GetTaskScheduler()
+	if scheduler == nil {
+		global.Logger.Info("任务调度器未初始化，跳过任务启动")
+		return
+	}
+	if err := scheduler.StartAllEnabledTasks(); err != nil {
+		global.Logger.Error("启动任务失败", zap.Error(err))
+	}
 }
 
 // GetUptime 获取系统运行时间

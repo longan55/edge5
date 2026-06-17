@@ -21,15 +21,15 @@ type TaskHandler struct {
 
 func NewTaskHandler(dbLogger *zap.Logger) *TaskHandler {
 	repo := repository.NewTaskRepository(global.DB, dbLogger)
+	deviceRepo := repository.NewDeviceRepository(global.DB)
+	service.NewTaskScheduler(repo, deviceRepo, dbLogger)
 	svc := service.NewTaskService(repo, dbLogger)
-	// 自动建表
 	if err := repo.AutoMigrate(); err != nil {
 		dbLogger.Error("Task 自动建表失败", zap.Error(err))
 	}
 	return &TaskHandler{svc: svc}
 }
 
-// CreateTask 创建任务
 func (h *TaskHandler) CreateTask(c *gin.Context) {
 	var task model.Task
 	if err := c.ShouldBindJSON(&task); err != nil {
@@ -43,7 +43,6 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 	response.Success(c, task)
 }
 
-// UpdateTask 更新任务
 func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	var task model.Task
 	if err := c.ShouldBindJSON(&task); err != nil {
@@ -57,7 +56,6 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	response.Success(c, task)
 }
 
-// DeleteTask 删除单个任务
 func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -72,7 +70,6 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	response.Success(c, nil)
 }
 
-// DeleteTaskBatch 批量删除任务
 func (h *TaskHandler) DeleteTaskBatch(c *gin.Context) {
 	var req struct {
 		IDs []uint64 `json:"ids"`
@@ -88,7 +85,6 @@ func (h *TaskHandler) DeleteTaskBatch(c *gin.Context) {
 	response.Success(c, nil)
 }
 
-// GetTask 获取单个任务
 func (h *TaskHandler) GetTask(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -104,7 +100,6 @@ func (h *TaskHandler) GetTask(c *gin.Context) {
 	response.Success(c, task)
 }
 
-// ListTasks 分页查询任务列表
 func (h *TaskHandler) ListTasks(c *gin.Context) {
 	pageStr := c.DefaultQuery("page", "1")
 	pageSizeStr := c.DefaultQuery("pageSize", "10")
@@ -133,7 +128,6 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 	})
 }
 
-// StartTask 开启任务
 func (h *TaskHandler) StartTask(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -148,7 +142,6 @@ func (h *TaskHandler) StartTask(c *gin.Context) {
 	response.Success(c, nil)
 }
 
-// StopTask 关闭任务
 func (h *TaskHandler) StopTask(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
@@ -163,7 +156,21 @@ func (h *TaskHandler) StopTask(c *gin.Context) {
 	response.Success(c, nil)
 }
 
-// getDeviceProtocolName 从设备记录中获取协议名称
+func (h *TaskHandler) GetTaskData(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		response.Error(c, response.CodeInvalidParam, "无效的 ID")
+		return
+	}
+	data, err := h.svc.GetTaskData(id)
+	if err != nil {
+		response.Error(c, response.CodeServerError, "查询失败: "+err.Error())
+		return
+	}
+	response.Success(c, data)
+}
+
 func getDeviceProtocolName(deviceID uint64) (string, error) {
 	var device model.Device
 	if err := global.DB.First(&device, deviceID).Error; err != nil {
@@ -175,7 +182,6 @@ func getDeviceProtocolName(deviceID uint64) (string, error) {
 	return "", fmt.Errorf("设备未绑定协议")
 }
 
-// GetReadParamsSchema 获取指定协议的采集参数 Schema
 func (h *TaskHandler) GetReadParamsSchema(c *gin.Context) {
 	deviceIDStr := c.Param("deviceId")
 	deviceID, err := strconv.ParseUint(deviceIDStr, 10, 64)
@@ -190,7 +196,6 @@ func (h *TaskHandler) GetReadParamsSchema(c *gin.Context) {
 		return
 	}
 
-	// 从协议注册表中获取协议信息
 	reg := protocol.DefaultRegistry()
 	infos := reg.List()
 	var schema []protocol.ReadParamSchema
@@ -202,7 +207,6 @@ func (h *TaskHandler) GetReadParamsSchema(c *gin.Context) {
 	}
 
 	if schema == nil {
-		// 返回默认 schema（通用参数）
 		schema = []protocol.ReadParamSchema{
 			{Name: "address", CName: "地址", Type: "string"},
 			{Name: "offset", CName: "偏移量", Type: "int"},

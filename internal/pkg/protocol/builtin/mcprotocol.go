@@ -257,7 +257,7 @@ func (m *McService) readPoint(client mcp.Client, pt protocol.Point) protocol.Bat
 	}
 
 	return protocol.BatchReadResult{
-		PointName: pt.Name,
+		PointName: pt.Resource,
 		Value:     value,
 		Quality:   quality,
 		Error:     err,
@@ -879,6 +879,12 @@ func getInt(m protocol.Metadata, key string) int {
 	case int:
 		return val
 	case int64:
+		return int(val)
+	case uint:
+		return int(val)
+	case uint32:
+		return int(val)
+	case uint64:
 		return int(val)
 	case float64:
 		return int(val)

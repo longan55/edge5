@@ -331,15 +331,48 @@ func (b *gopluginBridge) IsSupportServer() bool {
 }
 
 func (b *gopluginBridge) ReadBatch(ctx context.Context, handle DeviceHandle, req BatchReadRequest) (*BatchReadResponse, error) {
-	result, err := b.adapter.ReadBatch(ctx, req)
+	reqMap := map[string]any{
+		"Points":  make([]interface{}, 0, len(req.Points)),
+		"Options": req.Options,
+	}
+	for _, p := range req.Points {
+		reqMap["Points"] = append(reqMap["Points"].([]interface{}), map[string]any{
+			"Name":     p.Name,
+			"Resource": p.Resource,
+			"DataType": p.DataType,
+			"Count":    p.Count,
+		})
+	}
+
+	result, err := b.adapter.ReadBatch(ctx, reqMap)
 	if err != nil {
 		return nil, err
 	}
-	resp, ok := result.(*BatchReadResponse)
+
+	respMap, ok := result.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("unexpected ReadBatch result type: %T", result)
 	}
-	return resp, nil
+
+	resultsRaw, _ := respMap["Results"].([]interface{})
+	results := make([]BatchReadResult, 0, len(resultsRaw))
+	for _, r := range resultsRaw {
+		if resultMap, ok := r.(map[string]any); ok {
+			pointName, _ := resultMap["PointName"].(string)
+			value := resultMap["Value"]
+			quality, _ := resultMap["Quality"].(string)
+			results = append(results, BatchReadResult{
+				PointName: pointName,
+				Value:     value,
+				Quality:   quality,
+			})
+		}
+	}
+	raw, _ := respMap["Raw"].([]byte)
+	return &BatchReadResponse{
+		Results: results,
+		Raw:     raw,
+	}, nil
 }
 
 func (b *gopluginBridge) WriteBatch(ctx context.Context, handle DeviceHandle, req BatchWriteRequest) error {
