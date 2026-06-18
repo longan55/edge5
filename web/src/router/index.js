@@ -56,7 +56,7 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const token = localStorage.getItem('token')
   const whiteList = ['/login', '/register']
 
@@ -66,9 +66,15 @@ router.beforeEach((to, from, next) => {
     if (token) {
       const userStore = useUserStore()
       if (!userStore.userInfo) {
-        userStore.getUserInfo()
+        try {
+          await userStore.getUserInfo()
+          next()
+        } catch {
+          next('/login')
+        }
+      } else {
+        next()
       }
-      next()
     } else {
       next('/login')
     }
