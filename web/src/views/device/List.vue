@@ -637,7 +637,6 @@ const handleDetail = (row) => {
   detailForm.device_type = (row.device_type || '').toUpperCase()
   detailForm.brand = row.brand || ''
   detailForm.protocol = row.protocol || ''
-  detailForm.model = row.model || ''
   detailForm.online = row.online || false
   
   // 清空旧配置
@@ -654,8 +653,11 @@ const handleDetail = (row) => {
       config = {}
     }
     Object.assign(detailForm.config, config)
+    
+    // 型号从config中获取
+    detailForm.model = config.model || ''
   } catch {
-    // 如果解析失败，保持空配置
+    detailForm.model = ''
   }
   
   detailDialogVisible.value = true
