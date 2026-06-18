@@ -373,6 +373,15 @@ func (s *MQTTBusinessService) startBusinessGoroutines() {
 	go s.heartbeatLoop()
 	go s.propertiesLoop()
 	go s.deviceRegisterLoop()
+
+	// MQTT重连后上报缓存数据
+	go func() {
+		time.Sleep(2 * time.Second) // 等待MQTT连接稳定
+		scheduler := GetTaskScheduler()
+		if scheduler != nil {
+			scheduler.FlushAllCache()
+		}
+	}()
 }
 
 // stopBusinessGoroutines 停止业务协程

@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"edge5/config"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,14 +8,18 @@ import (
 	"sync"
 	"time"
 
+	"edge5/config"
+
 	"github.com/boltdb/bolt"
 	"go.uber.org/zap"
 )
 
+// BoltCache 基于 BoltDB 的持久化缓存，每次操作即时打开/关闭数据库，
+// 不持有文件锁，方便外部工具随时连接查看。
 type BoltCache struct {
-	db     *bolt.DB
+	dbPath string
 	bucket []byte
-	mu     sync.RWMutex
+	mu     sync.Mutex
 	logger *zap.Logger
 }
 
@@ -44,16 +47,10 @@ func NewBoltCache(opts ...CacheOption) (*BoltCache, error) {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
+	// 清理可能残留的锁文件
 	lockPath := cachePath + ".lock"
 	if _, err := os.Stat(lockPath); err == nil {
 		_ = os.Remove(lockPath)
-	}
-
-	db, err := bolt.Open(cachePath, 0644, &bolt.Options{
-		Timeout: time.Second,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to open boltdb: %w", err)
 	}
 
 	bucket := []byte(config.CONFIG.Cache.BoltDB.Bucket)
@@ -61,16 +58,8 @@ func NewBoltCache(opts ...CacheOption) (*BoltCache, error) {
 		bucket = []byte("cache_queue")
 	}
 
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(bucket)
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create bucket: %w", err)
-	}
-
 	bc := &BoltCache{
-		db:     db,
+		dbPath: cachePath,
 		bucket: bucket,
 		logger: zap.NewNop(),
 	}
@@ -79,10 +68,45 @@ func NewBoltCache(opts ...CacheOption) (*BoltCache, error) {
 		opt(bc)
 	}
 
-	bc.logger.Info("BoltDB缓存初始化成功",
-		zap.String("path", cachePath))
+	// 初始化时创建 bucket（用完即关闭，不持有锁）
+	if err := bc.openAndUpdate(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists(bucket)
+		return err
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create bucket: %w", err)
+	}
 
+	bc.logger.Info("BoltDB缓存初始化成功", zap.String("path", cachePath))
 	return bc, nil
+}
+
+// openDB 打开数据库连接
+func (bc *BoltCache) openDB() (*bolt.DB, error) {
+	return bolt.Open(bc.dbPath, 0644, &bolt.Options{
+		Timeout: time.Second,
+	})
+}
+
+// openAndUpdate 打开数据库、执行写事务、关闭
+func (bc *BoltCache) openAndUpdate(fn func(*bolt.Tx) error) error {
+	db, err := bc.openDB()
+	if err != nil {
+		return fmt.Errorf("failed to open boltdb: %w", err)
+	}
+	defer db.Close()
+
+	return db.Update(fn)
+}
+
+// openAndView 打开数据库、执行读事务、关闭
+func (bc *BoltCache) openAndView(fn func(*bolt.Tx) error) error {
+	db, err := bc.openDB()
+	if err != nil {
+		return fmt.Errorf("failed to open boltdb: %w", err)
+	}
+	defer db.Close()
+
+	return db.View(fn)
 }
 
 func (bc *BoltCache) Push(msg *CacheMessage) error {
@@ -94,7 +118,7 @@ func (bc *BoltCache) Push(msg *CacheMessage) error {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
-	return bc.db.Update(func(tx *bolt.Tx) error {
+	return bc.openAndUpdate(func(tx *bolt.Tx) error {
 		return tx.Bucket(bc.bucket).Put([]byte(msg.ID), data)
 	})
 }
@@ -104,7 +128,7 @@ func (bc *BoltCache) Pop() (*CacheMessage, error) {
 	defer bc.mu.Unlock()
 
 	var msg *CacheMessage
-	err := bc.db.Update(func(tx *bolt.Tx) error {
+	err := bc.openAndUpdate(func(tx *bolt.Tx) error {
 		cursor := tx.Bucket(bc.bucket).Cursor()
 		k, v := cursor.First()
 
@@ -124,11 +148,11 @@ func (bc *BoltCache) Pop() (*CacheMessage, error) {
 }
 
 func (bc *BoltCache) Peek() (*CacheMessage, error) {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
 
 	var msg *CacheMessage
-	err := bc.db.View(func(tx *bolt.Tx) error {
+	err := bc.openAndView(func(tx *bolt.Tx) error {
 		cursor := tx.Bucket(bc.bucket).Cursor()
 		_, v := cursor.First()
 
@@ -144,11 +168,11 @@ func (bc *BoltCache) Peek() (*CacheMessage, error) {
 }
 
 func (bc *BoltCache) Get(id string) (*CacheMessage, error) {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
 
 	var msg *CacheMessage
-	err := bc.db.View(func(tx *bolt.Tx) error {
+	err := bc.openAndView(func(tx *bolt.Tx) error {
 		v := tx.Bucket(bc.bucket).Get([]byte(id))
 		if v == nil {
 			return fmt.Errorf("message %s not found", id)
@@ -165,7 +189,7 @@ func (bc *BoltCache) Delete(id string) error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	return bc.db.Update(func(tx *bolt.Tx) error {
+	return bc.openAndUpdate(func(tx *bolt.Tx) error {
 		return tx.Bucket(bc.bucket).Delete([]byte(id))
 	})
 }
@@ -175,11 +199,11 @@ func (bc *BoltCache) Update(msg *CacheMessage) error {
 }
 
 func (bc *BoltCache) Size() int {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
 
 	var count int
-	bc.db.View(func(tx *bolt.Tx) error {
+	bc.openAndView(func(tx *bolt.Tx) error {
 		cursor := tx.Bucket(bc.bucket).Cursor()
 		for k, _ := cursor.First(); k != nil; k, _ = cursor.Next() {
 			count++
@@ -191,11 +215,11 @@ func (bc *BoltCache) Size() int {
 }
 
 func (bc *BoltCache) GetAll() ([]*CacheMessage, error) {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
+	bc.mu.Lock()
+	defer bc.mu.Unlock()
 
 	var messages []*CacheMessage
-	err := bc.db.View(func(tx *bolt.Tx) error {
+	err := bc.openAndView(func(tx *bolt.Tx) error {
 		cursor := tx.Bucket(bc.bucket).Cursor()
 		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
 			msg := &CacheMessage{}
@@ -214,7 +238,7 @@ func (bc *BoltCache) Clear() error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	return bc.db.Update(func(tx *bolt.Tx) error {
+	return bc.openAndUpdate(func(tx *bolt.Tx) error {
 		return tx.DeleteBucket(bc.bucket)
 	})
 }
@@ -223,8 +247,21 @@ func (bc *BoltCache) Close() error {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	bc.logger.Info("BoltDB缓存关闭",
-		zap.Int("remaining_messages", bc.Size()))
+	bc.logger.Info("BoltDB缓存关闭", zap.Int("remaining_messages", bc.unsafeSize()))
 
-	return bc.db.Close()
+	// 数据库未持久持有，无需关闭连接
+	return nil
+}
+
+// unsafeSize 不加锁的 Size 版本，仅用于 Close 时日志输出
+func (bc *BoltCache) unsafeSize() int {
+	var count int
+	bc.openAndView(func(tx *bolt.Tx) error {
+		cursor := tx.Bucket(bc.bucket).Cursor()
+		for k, _ := cursor.First(); k != nil; k, _ = cursor.Next() {
+			count++
+		}
+		return nil
+	})
+	return count
 }

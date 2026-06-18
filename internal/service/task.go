@@ -10,6 +10,7 @@ import (
 
 	"edge5/global"
 	"edge5/internal/model"
+	"edge5/internal/pkg/cache"
 	"edge5/internal/pkg/protocol"
 	"edge5/internal/repository"
 
@@ -335,16 +336,12 @@ func (s *TaskScheduler) cacheData(taskID uint64, record TaskDataRecord) {
 }
 
 func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data map[string]interface{}) {
-	if global.MQTTClient == nil || !global.MQTTClient.IsConnected() {
-		s.logger.Warn("MQTT未连接，数据已缓存", zap.Uint64("taskID", task.ID))
-		return
-	}
-
+	ts := time.Now()
 	payload := map[string]interface{}{
 		"device_sn": device.DeviceSn,
 		"task_id":   task.ID,
 		"task_name": task.Name,
-		"timestamp": time.Now().UnixMilli(),
+		"timestamp": ts.UnixMilli(),
 		"data":      data,
 	}
 
@@ -353,7 +350,54 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 		s.logger.Error("序列化上报数据失败", zap.Uint64("taskID", task.ID), zap.Error(err))
 		return
 	}
-	s.logger.Debug("准备上报数据", zap.Any("data", jsonData))
+
+	topic := task.UpTopic
+	if topic == "" {
+		topic = fmt.Sprintf("%s/data", device.DeviceSn)
+	}
+
+	if global.MQTTClient == nil || !global.MQTTClient.IsConnected() {
+		if global.CacheDB != nil {
+			msg := &cache.CacheMessage{
+				ID:        fmt.Sprintf("task_%d_%d", task.ID, ts.UnixMilli()),
+				Topic:     topic,
+				Payload:   jsonData,
+				CreatedAt: ts.Unix(),
+			}
+			if err := global.CacheDB.Push(msg); err != nil {
+				s.logger.Error("缓存数据到BoltDB失败", zap.Uint64("taskID", task.ID), zap.Error(err))
+				return
+			}
+			s.logger.Info("MQTT未连接，数据已持久化缓存", zap.Uint64("taskID", task.ID))
+		} else {
+			s.logger.Warn("MQTT未连接且CacheDB未初始化，数据丢弃", zap.Uint64("taskID", task.ID))
+		}
+		return
+	}
+
+	err = global.MQTTClient.Publish(topic, byte(global.CONFIG.MQTT.QoS), jsonData)
+	if err != nil {
+		s.logger.Error("MQTT发布失败", zap.Uint64("taskID", task.ID), zap.String("topic", topic), zap.Error(err))
+		return
+	}
+	s.logger.Debug("MQTT发布成功", zap.Uint64("taskID", task.ID), zap.String("topic", topic))
+}
+
+func (s *TaskScheduler) doReport(task *model.Task, device *model.Device, data map[string]interface{}, ts time.Time) {
+	payload := map[string]interface{}{
+		"device_sn": device.DeviceSn,
+		"task_id":   task.ID,
+		"task_name": task.Name,
+		"timestamp": ts.UnixMilli(),
+		"data":      data,
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		s.logger.Error("序列化上报数据失败", zap.Uint64("taskID", task.ID), zap.Error(err))
+		return
+	}
+
 	topic := task.UpTopic
 	if topic == "" {
 		topic = fmt.Sprintf("%s/data", device.DeviceSn)
@@ -362,8 +406,95 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 	err = global.MQTTClient.Publish(topic, byte(global.CONFIG.MQTT.QoS), jsonData)
 	if err != nil {
 		s.logger.Error("MQTT发布失败", zap.Uint64("taskID", task.ID), zap.String("topic", topic), zap.Error(err))
+		return
 	}
 	s.logger.Debug("MQTT发布成功", zap.Uint64("taskID", task.ID), zap.String("topic", topic))
+}
+
+// FlushAllCache MQTT重连后上报所有缓存数据（内存缓存 + BoltDB 持久化缓存）
+func (s *TaskScheduler) FlushAllCache() {
+	if global.MQTTClient == nil || !global.MQTTClient.IsConnected() {
+		return
+	}
+
+	// 1. 刷新内存缓存
+	s.mu.Lock()
+	entries := make([]*taskEntry, 0, len(s.tasks))
+	for _, entry := range s.tasks {
+		entries = append(entries, entry)
+	}
+	s.mu.Unlock()
+
+	for _, entry := range entries {
+		s.flushTaskCache(entry)
+	}
+
+	// 2. 刷新 BoltDB 持久化缓存
+	if global.CacheDB != nil {
+		s.flushBoltCache()
+	}
+}
+
+func (s *TaskScheduler) flushBoltCache() {
+	messages, err := global.CacheDB.GetAll()
+	if err != nil {
+		s.logger.Error("读取BoltDB缓存失败", zap.Error(err))
+		return
+	}
+
+	if len(messages) == 0 {
+		return
+	}
+
+	s.logger.Info("开始上报BoltDB缓存数据", zap.Int("count", len(messages)))
+	successCount := 0
+	for _, msg := range messages {
+		if global.MQTTClient == nil || !global.MQTTClient.IsConnected() {
+			s.logger.Warn("MQTT连接中断，BoltDB缓存上报暂停", zap.Int("remaining", len(messages)-successCount))
+			return
+		}
+
+		err := global.MQTTClient.Publish(msg.Topic, byte(global.CONFIG.MQTT.QoS), msg.Payload)
+		if err != nil {
+			s.logger.Error("BoltDB缓存消息发布失败", zap.String("id", msg.ID), zap.Error(err))
+			continue
+		}
+
+		if err := global.CacheDB.Delete(msg.ID); err != nil {
+			s.logger.Error("删除BoltDB缓存消息失败", zap.String("id", msg.ID), zap.Error(err))
+		}
+		successCount++
+	}
+
+	s.logger.Info("BoltDB缓存数据上报完成", zap.Int("count", successCount))
+}
+
+func (s *TaskScheduler) flushTaskCache(entry *taskEntry) {
+	entry.cacheMu.Lock()
+	if len(entry.cache) == 0 {
+		entry.cacheMu.Unlock()
+		return
+	}
+
+	// 按时间从旧到新上报
+	records := make([]TaskDataRecord, len(entry.cache))
+	copy(records, entry.cache)
+	entry.cache = entry.cache[:0]
+	entry.cacheMu.Unlock()
+
+	for i := len(records) - 1; i >= 0; i-- {
+		if global.MQTTClient == nil || !global.MQTTClient.IsConnected() {
+			// MQTT又断开，将未上报的数据放回缓存
+			entry.cacheMu.Lock()
+			entry.cache = append(entry.cache, records[:i+1]...)
+			entry.cacheMu.Unlock()
+			s.logger.Warn("MQTT连接中断，缓存数据上报暂停", zap.Uint64("taskID", entry.task.ID))
+			return
+		}
+		s.doReport(entry.task, entry.device, records[i].Data, records[i].Timestamp)
+	}
+
+	s.logger.Info("缓存数据上报完成", zap.Uint64("taskID", entry.task.ID), zap.Int("count", len(records)))
 }
 
 func (s *TaskScheduler) StartAllEnabledTasks() error {
