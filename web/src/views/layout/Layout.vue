@@ -16,19 +16,6 @@
           <span>仪表盘</span>
         </el-menu-item>
 
-        <el-sub-menu index="/system">
-          <template #title>
-            <el-icon><Setting /></el-icon>
-            <span>系统管理</span>
-          </template>
-          <el-menu-item index="/system/user">用户管理</el-menu-item>
-        </el-sub-menu>
-
-        <el-menu-item index="/mqtt/config">
-          <el-icon><Connection /></el-icon>
-          <span>MQTT配置</span>
-        </el-menu-item>
-
         <el-menu-item index="/device/list">
           <el-icon><Box /></el-icon>
           <span>设备管理</span>
@@ -38,6 +25,19 @@
           <el-icon><Document /></el-icon>
           <span>采集任务</span>
         </el-menu-item>
+
+        <el-menu-item index="/mqtt/config">
+          <el-icon><Connection /></el-icon>
+          <span>MQTT配置</span>
+        </el-menu-item>
+
+        <el-sub-menu index="/system">
+          <template #title>
+            <el-icon><Setting /></el-icon>
+            <span>系统管理</span>
+          </template>
+          <el-menu-item index="/system/user">用户管理</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
 
