@@ -77,10 +77,6 @@ func (s *TaskScheduler) StartTask(taskID uint64) error {
 		return fmt.Errorf("获取任务失败: %w", err)
 	}
 
-	if !task.State {
-		return fmt.Errorf("任务状态为停止，请先启用任务")
-	}
-
 	device, err := s.deviceRepo.GetByID(task.DeviceID)
 	if err != nil {
 		return fmt.Errorf("获取设备失败: %w", err)

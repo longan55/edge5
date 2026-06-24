@@ -77,10 +77,11 @@ func run() error {
 	// 异步测试设备连接并更新在线状态
 	service.TestDeviceConnections()
 
-	// 启动所有任务（预留接口）
-	service.StartAllTasks()
-
+	// 初始化路由（会初始化任务调度器）
 	r := router.SetupRouter(config.CONFIG.Server.Mode)
+
+	// 启动所有任务（路由初始化后，任务调度器已就绪）
+	service.StartAllTasks()
 
 	srv := &http.Server{
 		Addr:           fmt.Sprintf("%s:%d", config.CONFIG.Server.Host, config.CONFIG.Server.Port),
