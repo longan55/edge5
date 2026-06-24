@@ -249,6 +249,13 @@ func (h *MQTTHandler) rebuildClient() {
 		_ = global.MQTTClient.Close()
 	}
 	global.MQTTClient = global.NewMqttClient()
+	global.MQTTClient.SetOnConnectCallback(func() {
+		global.Logger.Info("MQTT重连成功(API触发)，开始上报缓存数据")
+		scheduler := service.GetTaskScheduler()
+		if scheduler != nil {
+			scheduler.FlushAllCache()
+		}
+	})
 }
 
 func (h *MQTTHandler) waitForConnected(timeout time.Duration, pollInterval time.Duration) bool {

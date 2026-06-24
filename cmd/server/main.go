@@ -61,6 +61,16 @@ func run() error {
 		global.Logger.Warn("MQTT初始化失败，将稍后重试", zap.Error(err))
 	}
 
+	if global.MQTTClient != nil {
+		global.MQTTClient.SetOnConnectCallback(func() {
+			global.Logger.Info("MQTT重连成功，开始上报缓存数据")
+			scheduler := service.GetTaskScheduler()
+			if scheduler != nil {
+				scheduler.FlushAllCache()
+			}
+		})
+	}
+
 	// 启动 MQTT 业务服务（网关注册、心跳、状态上报、订阅下行主题）
 	startMQTTBusiness()
 

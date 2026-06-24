@@ -13,9 +13,10 @@ import (
 )
 
 type myMqttClient struct {
-	init      bool
-	connected bool
-	client    mqtt.Client
+	init              bool
+	connected         bool
+	client            mqtt.Client
+	onConnectCallback func()
 }
 
 func NewMqttClient() *myMqttClient {
@@ -104,6 +105,10 @@ func (my *myMqttClient) Connect() error {
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
 		my.connected = true
 		Logger.Info("成功连接到MQTT Broker", zap.String("broker", broker))
+
+		if my.onConnectCallback != nil {
+			go my.onConnectCallback()
+		}
 	})
 
 	my.client = mqtt.NewClient(opts)
@@ -244,4 +249,8 @@ func (my *myMqttClient) Unsubscribe(topic string) error {
 		return errors.New("mqtt client not connected")
 	}
 	return my.client.Unsubscribe(topic).Error()
+}
+
+func (my *myMqttClient) SetOnConnectCallback(callback func()) {
+	my.onConnectCallback = callback
 }
