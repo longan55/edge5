@@ -201,10 +201,17 @@ func (h *MQTTHandler) GetStatus(c *gin.Context) {
 	if global.MQTTClient != nil {
 		connected = global.MQTTClient.IsConnected()
 	}
-	global.Logger.Debug("Handler.GetStatus: 返回状态", zap.Bool("connected", connected))
+
+	cacheSize := 0
+	if global.CacheDB != nil {
+		cacheSize = global.CacheDB.Size()
+	}
+
+	global.Logger.Debug("Handler.GetStatus: 返回状态", zap.Bool("connected", connected), zap.Int("cacheSize", cacheSize))
 	response.Success(c, gin.H{
-		"connected": connected,
-		"uptime":    service.GetUptime(),
+		"connected":  connected,
+		"uptime":     service.GetUptime(),
+		"cache_size": cacheSize,
 	})
 }
 

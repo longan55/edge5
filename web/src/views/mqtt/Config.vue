@@ -330,8 +330,10 @@ const fetchStatus = async () => {
   try {
     const res = await request.get('/mqtt/status')
     mqttConnected.value = res.data?.connected || false
+    cacheSize.value = res.data?.cache_size || 0
   } catch (error) {
     mqttConnected.value = false
+    cacheSize.value = 0
   }
 }
 
@@ -559,7 +561,7 @@ onMounted(() => {
   fetchConfig()
   fetchTopics()
   fetchStatus()
-  setInterval(fetchStatus, 60000)
+  setInterval(fetchStatus, 5000)
 })
 </script>
 
