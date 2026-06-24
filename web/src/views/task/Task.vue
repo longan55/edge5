@@ -52,11 +52,12 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="280" fixed="right">
+          <el-table-column label="操作" width="340" fixed="right">
             <template #default="{ row }">
               <el-button type="success" size="small" link @click="handleStart(row)">启动</el-button>
               <el-button type="warning" size="small" link @click="handleStop(row)">停止</el-button>
               <el-button type="primary" size="small" link @click="handleEdit(row)">编辑</el-button>
+              <el-button type="info" size="small" link @click="handleViewData(row)">数据</el-button>
               <el-button type="danger" size="small" link @click="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -150,11 +151,40 @@
         <el-button type="primary" :loading="btnLoading" @click="submitForm">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 数据查看弹窗 -->
+    <el-dialog
+      :title="'任务数据 - ' + currentTaskName"
+      v-model="dataDialogVisible"
+      width="900px"
+      :close-on-click-modal="false"
+    >
+      <el-table :data="taskDataList" style="width: 100%">
+        <el-table-column label="时间" prop="timestamp" width="200">
+          <template #default="{ row }">{{ formatTimestamp(row.timestamp) }}</template>
+        </el-table-column>
+        <el-table-column label="数据" prop="data">
+          <template #default="{ row }">
+            <pre style="white-space: pre-wrap; word-break: break-all; margin: 0; font-family: inherit;">{{ formatData(row.data) }}</pre>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" prop="upState" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.upState ? 'success' : 'danger'" size="small">
+              {{ row.upState ? '已上报' : '缓存中' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!taskDataList.length" style="text-align: center; padding: 40px; color: #999;">
+        暂无数据
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createTask,
@@ -165,7 +195,8 @@ import {
   startTask,
   stopTask,
   getDevices,
-  getReadParamsSchema
+  getReadParamsSchema,
+  getTaskData
 } from '@/api/task'
 
 // 搜索
@@ -417,6 +448,70 @@ const handleDelete = (row) => {
       ElMessage.error('删除失败')
     }
   }).catch(() => {})
+}
+
+// 数据查看
+const dataDialogVisible = ref(false)
+const currentTaskName = ref('')
+const currentTaskId = ref(null)
+const taskDataList = ref([])
+const dataRefreshTimer = ref(null)
+
+const fetchTaskData = async () => {
+  if (!currentTaskId.value) return
+  try {
+    const res = await getTaskData(currentTaskId.value)
+    if (res.code === 0) {
+      taskDataList.value = res.data || []
+    }
+  } catch (e) {
+    console.error('获取任务数据失败', e)
+  }
+}
+
+const handleViewData = async (row) => {
+  currentTaskName.value = row.name
+  currentTaskId.value = row.id
+  taskDataList.value = []
+  await fetchTaskData()
+  // 启动定时刷新
+  if (dataRefreshTimer.value) {
+    clearInterval(dataRefreshTimer.value)
+  }
+  dataRefreshTimer.value = setInterval(fetchTaskData, 2000)
+  dataDialogVisible.value = true
+}
+
+// 监听弹窗关闭
+watch(dataDialogVisible, (val) => {
+  if (!val && dataRefreshTimer.value) {
+    clearInterval(dataRefreshTimer.value)
+    dataRefreshTimer.value = null
+    currentTaskId.value = null
+  }
+})
+
+const formatTimestamp = (timestamp) => {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+const formatData = (dataStr) => {
+  if (!dataStr) return ''
+  try {
+    const parsed = JSON.parse(dataStr)
+    return JSON.stringify(parsed)
+  } catch (e) {
+    return dataStr
+  }
 }
 
 // 初始化

@@ -49,3 +49,8 @@ export function getDevices(params) {
 export function getReadParamsSchema(deviceId) {
   return request.get(`/task/device-read-params-schema/${deviceId}`)
 }
+
+// 获取任务采集数据
+export function getTaskData(taskId) {
+  return request.get(`/task/${taskId}/data`)
+}

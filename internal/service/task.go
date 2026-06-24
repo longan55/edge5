@@ -21,8 +21,9 @@ import (
 const maxCacheSize = 10
 
 type TaskDataRecord struct {
-	Timestamp time.Time              `json:"timestamp"`
-	Data      map[string]interface{} `json:"data"`
+	Timestamp time.Time `json:"timestamp"`
+	Data      string    `json:"data"`
+	UpState   bool      `json:"upState"`
 }
 
 type taskEntry struct {
@@ -247,12 +248,6 @@ func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *mo
 		return
 	}
 
-	record := TaskDataRecord{
-		Timestamp: time.Now(),
-		Data:      dataMap,
-	}
-
-	s.cacheData(taskID, record)
 	s.reportData(task, device, dataMap)
 }
 
@@ -331,7 +326,7 @@ func (s *TaskScheduler) cacheData(taskID uint64, record TaskDataRecord) {
 	}
 }
 
-func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data map[string]interface{}) {
+func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data map[string]interface{}) error {
 	ts := time.Now()
 	payload := map[string]interface{}{
 		"device_sn": device.DeviceSn,
@@ -344,12 +339,19 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		s.logger.Error("序列化上报数据失败", zap.Uint64("taskID", task.ID), zap.Error(err))
-		return
+		return err
 	}
 
 	topic := task.UpTopic
 	if topic == "" {
 		topic = fmt.Sprintf("%s/data", device.DeviceSn)
+	}
+
+	// 构建完整的记录用于缓存
+	record := TaskDataRecord{
+		Timestamp: ts,
+		Data:      string(jsonData),
+		UpState:   false,
 	}
 
 	if global.MQTTClient == nil || !global.MQTTClient.IsConnected() {
@@ -362,49 +364,43 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 			}
 			if err := global.CacheDB.Push(msg); err != nil {
 				s.logger.Error("缓存数据到BoltDB失败", zap.Uint64("taskID", task.ID), zap.Error(err))
-				return
+				s.cacheData(task.ID, record) // 即使持久化失败，也缓存到内存
+				return err
 			}
 			s.logger.Info("MQTT未连接，数据已持久化缓存", zap.Uint64("taskID", task.ID))
 		} else {
 			s.logger.Warn("MQTT未连接且CacheDB未初始化，数据丢弃", zap.Uint64("taskID", task.ID))
+			s.cacheData(task.ID, record)
+			return fmt.Errorf("MQTT未连接且CacheDB未初始化，数据已内存缓存")
 		}
-		return
+		s.cacheData(task.ID, record)
+		return fmt.Errorf("MQTT未连接，数据已缓存")
 	}
 
 	err = global.MQTTClient.Publish(topic, byte(global.CONFIG.MQTT.QoS), jsonData)
 	if err != nil {
 		s.logger.Error("MQTT发布失败", zap.Uint64("taskID", task.ID), zap.String("topic", topic), zap.Error(err))
-		return
+		// 上报失败，缓存到 BoltDB 和内存
+		if global.CacheDB != nil {
+			msg := &cache.CacheMessage{
+				ID:        fmt.Sprintf("task_%d_%d", task.ID, ts.UnixMilli()),
+				Topic:     topic,
+				Payload:   jsonData,
+				CreatedAt: ts.Unix(),
+			}
+			if err := global.CacheDB.Push(msg); err != nil {
+				s.logger.Error("缓存数据到BoltDB失败", zap.Uint64("taskID", task.ID), zap.Error(err))
+			}
+		}
+		s.cacheData(task.ID, record)
+		return err
 	}
 	s.logger.Debug("MQTT发布成功", zap.Uint64("taskID", task.ID), zap.String("topic", topic))
-}
 
-func (s *TaskScheduler) doReport(task *model.Task, device *model.Device, data map[string]interface{}, ts time.Time) {
-	payload := map[string]interface{}{
-		"device_sn": device.DeviceSn,
-		"task_id":   task.ID,
-		"task_name": task.Name,
-		"timestamp": ts.UnixMilli(),
-		"data":      data,
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		s.logger.Error("序列化上报数据失败", zap.Uint64("taskID", task.ID), zap.Error(err))
-		return
-	}
-
-	topic := task.UpTopic
-	if topic == "" {
-		topic = fmt.Sprintf("%s/data", device.DeviceSn)
-	}
-
-	err = global.MQTTClient.Publish(topic, byte(global.CONFIG.MQTT.QoS), jsonData)
-	if err != nil {
-		s.logger.Error("MQTT发布失败", zap.Uint64("taskID", task.ID), zap.String("topic", topic), zap.Error(err))
-		return
-	}
-	s.logger.Debug("MQTT发布成功", zap.Uint64("taskID", task.ID), zap.String("topic", topic))
+	// 上报成功，缓存完整数据
+	record.UpState = true
+	s.cacheData(task.ID, record)
+	return nil
 }
 
 // FlushAllCache MQTT重连后上报所有缓存数据（内存缓存 + BoltDB 持久化缓存）
@@ -487,7 +483,20 @@ func (s *TaskScheduler) flushTaskCache(entry *taskEntry) {
 			s.logger.Warn("MQTT连接中断，缓存数据上报暂停", zap.Uint64("taskID", entry.task.ID))
 			return
 		}
-		s.doReport(entry.task, entry.device, records[i].Data, records[i].Timestamp)
+		// 直接发布缓存的 JSON 字符串
+		topic := entry.task.UpTopic
+		if topic == "" {
+			topic = fmt.Sprintf("%s/data", entry.device.DeviceSn)
+		}
+		err := global.MQTTClient.Publish(topic, byte(global.CONFIG.MQTT.QoS), []byte(records[i].Data))
+		if err != nil {
+			s.logger.Error("缓存数据发布失败", zap.Uint64("taskID", entry.task.ID), zap.Error(err))
+			// 发布失败，将未上报的数据放回缓存
+			entry.cacheMu.Lock()
+			entry.cache = append(entry.cache, records[:i+1]...)
+			entry.cacheMu.Unlock()
+			return
+		}
 	}
 
 	s.logger.Info("缓存数据上报完成", zap.Uint64("taskID", entry.task.ID), zap.Int("count", len(records)))

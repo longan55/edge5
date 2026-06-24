@@ -17,15 +17,15 @@ type MQTTBusinessReloader interface {
 }
 
 var (
-	CONFIG            = config.InitConfig("")
-	DB                *gorm.DB
-	Logger            *zap.Logger
-	CacheDB           *cache.BoltCache
-	MQTTClient        *myMqttClient
-	ConnectorMgr      connector.ConnectorManager
-	MyProcess         *Process
-	quitTasks         []QuitTask
-	quitMux           sync.Mutex
+	CONFIG       = config.InitConfig("")
+	DB           *gorm.DB
+	Logger       *zap.Logger
+	CacheDB      *cache.BoltCache
+	MQTTClient   *myMqttClient
+	ConnectorMgr connector.ConnectorManager
+	MyProcess    *Process
+	quitTasks    []QuitTask
+	quitMux      sync.Mutex
 
 	// MQTTBusinessService MQTT 业务服务实例（用于热更新）
 	MQTTBusinessService MQTTBusinessReloader
@@ -68,7 +68,7 @@ func RegisterQuitTask(f func() error, content string, order int) {
 	})
 }
 
-func GracefullyExit() {
+func BeforeExit() {
 	quitMux.Lock()
 	defer quitMux.Unlock()
 

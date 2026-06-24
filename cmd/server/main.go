@@ -109,7 +109,7 @@ func run() error {
 
 	global.Logger.Info("程序退出中...")
 	protocol.Shutdown(global.Logger)
-	global.GracefullyExit()
+	global.BeforeExit()
 	global.Logger.Info("程序已退出")
 
 	return nil
