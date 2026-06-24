@@ -112,6 +112,9 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import request from '@/utils/request'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
 
 const stats = ref({
   deviceTotal: 0,
@@ -133,22 +136,30 @@ let uptimeInterval = null
 
 const fetchStats = async () => {
   try {
-    const [deviceRes, mqttRes] = await Promise.all([
-      request.get('/device/list?page=1&page_size=1'),
-      request.get('/mqtt/status')
-    ])
+    const requests = [request.get('/device/list?page=1&page_size=1')]
+
+    // 只有登录后才调用mqtt/status接口
+    if (userStore.token) {
+      requests.push(request.get('/mqtt/status'))
+    }
+
+    const responses = await Promise.all(requests)
+    const deviceRes = responses[0]
+    const mqttRes = responses[1]
 
     stats.value.deviceTotal = deviceRes.data?.total || 0
 
     const deviceList = deviceRes.data?.list || []
     stats.value.deviceOnline = deviceList.filter(d => d.online).length
 
-    mqttConnected.value = mqttRes.data?.connected || false
+    if (mqttRes) {
+      mqttConnected.value = mqttRes.data?.connected || false
 
-    // 解析后端返回的 uptime 字符串，格式如 "up 0 days, 8 hours, 1 minute"
-    const uptimeStr = mqttRes.data?.uptime || ''
-    if (uptimeStr) {
-      uptime.value = parseUptime(uptimeStr)
+      // 解析后端返回的 uptime 字符串，格式如 "up 0 days, 8 hours, 1 minute"
+      const uptimeStr = mqttRes.data?.uptime || ''
+      if (uptimeStr) {
+        uptime.value = parseUptime(uptimeStr)
+      }
     }
   } catch (error) {
     console.error('获取统计数据失败:', error)
@@ -173,6 +184,11 @@ const parseUptime = (str) => {
 
 const updateUptime = async () => {
   // 只更新 uptime，不重复调用 fetchStats
+  // 只有登录后才调用mqtt/status接口
+  if (!userStore.token) {
+    return
+  }
+
   try {
     const mqttRes = await request.get('/mqtt/status')
     const uptimeStr = mqttRes.data?.uptime || ''
