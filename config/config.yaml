@@ -51,7 +51,7 @@ mqtt:
   request_problem: false
 
 log:
-  level: "info"
+  level: "debug"
   path: "./logs"
   pattern: "%Y%m%d.log"
   max_age: 7
