@@ -78,21 +78,32 @@ type TaskDataRecord struct {
 	UpState   bool      `json:"upState"`
 }
 
+type TaskStatus string
+
+const (
+	TaskStatusStopped      TaskStatus = "stopped"
+	TaskStatusRunning      TaskStatus = "running"
+	TaskStatusDisconnected TaskStatus = "disconnected"
+)
+
 type taskEntry struct {
-	task    *model.Task
-	device  *model.Device
-	cancel  context.CancelFunc
-	done    chan struct{}
-	cache   []TaskDataRecord
-	cacheMu sync.Mutex
+	task     *model.Task
+	device   *model.Device
+	cancel   context.CancelFunc
+	done     chan struct{}
+	cache    []TaskDataRecord
+	cacheMu  sync.Mutex
+	status   TaskStatus
+	statusMu sync.Mutex
 }
 
 type TaskScheduler struct {
-	mu         sync.Mutex
-	tasks      map[uint64]*taskEntry
-	logger     *zap.Logger
-	repo       *repository.TaskRepository
-	deviceRepo *repository.DeviceRepository
+	mu               sync.Mutex
+	tasks            map[uint64]*taskEntry
+	logger           *zap.Logger
+	repo             *repository.TaskRepository
+	deviceRepo       *repository.DeviceRepository
+	deviceStatusRepo *repository.DeviceStatusRepository
 }
 
 var taskScheduler *TaskScheduler
@@ -100,10 +111,11 @@ var taskScheduler *TaskScheduler
 func NewTaskScheduler(repo *repository.TaskRepository, deviceRepo *repository.DeviceRepository, logger *zap.Logger) *TaskScheduler {
 	if taskScheduler == nil {
 		taskScheduler = &TaskScheduler{
-			tasks:      make(map[uint64]*taskEntry),
-			logger:     logger,
-			repo:       repo,
-			deviceRepo: deviceRepo,
+			tasks:            make(map[uint64]*taskEntry),
+			logger:           logger,
+			repo:             repo,
+			deviceRepo:       deviceRepo,
+			deviceStatusRepo: repository.NewDeviceStatusRepository(global.DB),
 		}
 		global.RegisterQuitTask(func() error {
 			taskScheduler.StopAll()
@@ -145,6 +157,7 @@ func (s *TaskScheduler) StartTask(taskID uint64) error {
 		cancel: cancel,
 		done:   done,
 		cache:  make([]TaskDataRecord, 0, maxCacheSize),
+		status: TaskStatusDisconnected,
 	}
 	s.mu.Unlock()
 
@@ -165,7 +178,12 @@ func (s *TaskScheduler) StopTask(taskID uint64) error {
 	s.mu.Unlock()
 
 	entry.cancel()
-	<-entry.done
+
+	select {
+	case <-entry.done:
+	case <-time.After(5 * time.Second):
+		s.logger.Warn("任务停止超时，强制退出", zap.Uint64("taskID", taskID))
+	}
 
 	s.logger.Info("任务已停止", zap.Uint64("taskID", taskID), zap.String("taskName", entry.task.Name))
 	return nil
@@ -176,6 +194,17 @@ func (s *TaskScheduler) IsRunning(taskID uint64) bool {
 	defer s.mu.Unlock()
 	_, ok := s.tasks[taskID]
 	return ok
+}
+
+func (s *TaskScheduler) GetTaskStatus(taskID uint64) TaskStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry, ok := s.tasks[taskID]; ok {
+		entry.statusMu.Lock()
+		defer entry.statusMu.Unlock()
+		return entry.status
+	}
+	return TaskStatusStopped
 }
 
 func (s *TaskScheduler) GetTaskData(taskID uint64) []TaskDataRecord {
@@ -234,21 +263,6 @@ func (s *TaskScheduler) runTask(ctx context.Context, taskID uint64, task *model.
 		}
 	}
 
-	handle, err := proto.Connect(ctx, connectParams)
-	if err != nil {
-		s.logger.Error("协议连接设备失败", zap.Uint64("taskID", taskID), zap.String("protocol", device.Protocol), zap.Error(err))
-		return
-	}
-
-	defer func() {
-		disconnectCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = proto.Disconnect(disconnectCtx, handle)
-	}()
-
-	ticker := time.NewTicker(time.Duration(task.ReadInterval) * time.Second)
-	defer ticker.Stop()
-
 	points := make([]protocol.Point, 0, len(task.Commands))
 	commandMap := make(map[string]model.TaskCommand)
 	for _, cmd := range task.Commands {
@@ -260,18 +274,94 @@ func (s *TaskScheduler) runTask(ctx context.Context, taskID uint64, task *model.
 		commandMap[cmd.Address] = cmd
 	}
 
+	reconnectTicker := time.NewTicker(30 * time.Second)
+	defer reconnectTicker.Stop()
+
 	for {
+		// 检查是否已取消
 		select {
 		case <-ctx.Done():
 			s.logger.Info("任务协程退出", zap.Uint64("taskID", taskID))
 			return
-		case <-ticker.C:
-			s.executeRead(ctx, taskID, task, device, proto, handle, points, commandMap)
+		default:
+		}
+
+		handle, err := proto.Connect(ctx, connectParams)
+		if err != nil {
+			s.logger.Error("协议连接设备失败，30秒后重试", zap.Uint64("taskID", taskID), zap.String("protocol", device.Protocol), zap.Error(err))
+			s.setTaskStatus(taskID, TaskStatusDisconnected)
+			s.updateDeviceStatus(device.ID, false, "连接失败: "+err.Error())
+			// 等待重连或取消
+			select {
+			case <-ctx.Done():
+				s.logger.Info("任务协程退出（重连等待中取消）", zap.Uint64("taskID", taskID))
+				return
+			case <-reconnectTicker.C:
+				continue
+			}
+		}
+
+		// 连接成功，更新状态为运行中
+		s.setTaskStatus(taskID, TaskStatusRunning)
+		s.updateDeviceStatus(device.ID, true, "connected")
+		s.logger.Info("设备连接成功，开始采集", zap.Uint64("taskID", taskID))
+
+		func() {
+			disconnectCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			defer proto.Disconnect(disconnectCtx, handle)
+
+			ticker := time.NewTicker(time.Duration(task.ReadInterval) * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					s.logger.Info("任务协程退出", zap.Uint64("taskID", taskID))
+					return
+				case <-ticker.C:
+					s.executeRead(ctx, taskID, task, device, proto, handle, points, commandMap)
+				}
+			}
+		}()
+
+		// 连接断开，设置状态为未连接，等待重连
+		s.setTaskStatus(taskID, TaskStatusDisconnected)
+		s.updateDeviceStatus(device.ID, false, "connection lost")
+		s.logger.Warn("设备连接断开，30秒后重试", zap.Uint64("taskID", taskID))
+
+		select {
+		case <-ctx.Done():
+			s.logger.Info("任务协程退出", zap.Uint64("taskID", taskID))
+			return
+		case <-reconnectTicker.C:
 		}
 	}
 }
 
+func (s *TaskScheduler) setTaskStatus(taskID uint64, status TaskStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry, ok := s.tasks[taskID]; ok {
+		entry.statusMu.Lock()
+		entry.status = status
+		entry.statusMu.Unlock()
+	}
+}
+
+func (s *TaskScheduler) updateDeviceStatus(deviceID uint64, online bool, message string) {
+	if s.deviceStatusRepo != nil {
+		_ = s.deviceStatusRepo.UpsertByDeviceID(deviceID, online, time.Now(), message)
+	}
+}
+
 func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *model.Task, device *model.Device, proto protocol.DeviceCommProtocol, handle protocol.DeviceHandle, points []protocol.Point, commandMap map[string]model.TaskCommand) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("executeRead 发生 panic", zap.Uint64("taskID", taskID), zap.Any("panic", r))
+		}
+	}()
+
 	resp, err := proto.ReadBatch(ctx, handle, protocol.BatchReadRequest{
 		Points: points,
 	})
@@ -279,8 +369,6 @@ func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *mo
 		s.logger.Warn("读取数据失败", zap.Uint64("taskID", taskID), zap.Error(err))
 		return
 	}
-	fmt.Printf("commandMap: %v\n", commandMap)
-	fmt.Printf("resp: %v\n", resp)
 	if len(resp.Results) == 0 {
 		return
 	}
@@ -573,9 +661,9 @@ func (s *TaskScheduler) StartAllEnabledTasks() error {
 }
 
 type TaskService struct {
-	repo        *repository.TaskRepository
-	deviceRepo  *repository.DeviceRepository
-	logger      *zap.Logger
+	repo       *repository.TaskRepository
+	deviceRepo *repository.DeviceRepository
+	logger     *zap.Logger
 }
 
 func NewTaskService(repo *repository.TaskRepository, deviceRepo *repository.DeviceRepository, logger *zap.Logger) *TaskService {
@@ -645,7 +733,14 @@ func (s *TaskService) List(page, pageSize int, name string) ([]model.Task, int64
 	scheduler := GetTaskScheduler()
 	if scheduler != nil {
 		for i := range tasks {
-			tasks[i].State = scheduler.IsRunning(tasks[i].ID)
+			status := scheduler.GetTaskStatus(tasks[i].ID)
+			if status == TaskStatusRunning {
+				tasks[i].State = true
+			} else if status == TaskStatusDisconnected {
+				tasks[i].State = true
+			} else {
+				tasks[i].State = false
+			}
 		}
 	}
 

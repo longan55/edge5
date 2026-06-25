@@ -120,8 +120,30 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 		return
 	}
 
+	scheduler := service.GetTaskScheduler()
+	result := make([]map[string]interface{}, len(tasks))
+	for i, task := range tasks {
+		status := "stopped"
+		if scheduler != nil {
+			taskStatus := scheduler.GetTaskStatus(task.ID)
+			status = string(taskStatus)
+		}
+		result[i] = map[string]interface{}{
+			"id":           task.ID,
+			"name":         task.Name,
+			"deviceId":     task.DeviceID,
+			"upTopic":      task.UpTopic,
+			"readInterval": task.ReadInterval,
+			"commands":     task.Commands,
+			"state":        task.State,
+			"status":       status,
+			"createdAt":    task.CreatedAt,
+			"updatedAt":    task.UpdatedAt,
+		}
+	}
+
 	response.Success(c, gin.H{
-		"tasks":    tasks,
+		"tasks":    result,
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,

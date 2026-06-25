@@ -47,8 +47,8 @@
           </el-table-column>
           <el-table-column label="状态" prop="state" width="100">
             <template #default="{ row }">
-              <el-tag :type="row.state ? 'success' : 'danger'" size="small">
-                {{ row.state ? '运行中' : '已停止' }}
+              <el-tag :type="getStateTagType(row)" size="small">
+                {{ getStateText(row) }}
               </el-tag>
             </template>
           </el-table-column>
@@ -184,7 +184,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createTask,
@@ -456,6 +456,7 @@ const currentTaskName = ref('')
 const currentTaskId = ref(null)
 const taskDataList = ref([])
 const dataRefreshTimer = ref(null)
+const listRefreshTimer = ref(null)
 
 const fetchTaskData = async () => {
   if (!currentTaskId.value) return
@@ -514,10 +515,30 @@ const formatData = (dataStr) => {
   }
 }
 
+const getStateTagType = (row) => {
+  if (row.status === 'disconnected') return 'warning'
+  if (row.status === 'running') return 'success'
+  return 'danger'
+}
+
+const getStateText = (row) => {
+  if (row.status === 'disconnected') return '设备未连接'
+  if (row.status === 'running') return '运行中'
+  return '已停止'
+}
+
 // 初始化
 onMounted(() => {
   fetchData()
   fetchDevices()
+  listRefreshTimer.value = setInterval(fetchData, 5000)
+})
+
+onUnmounted(() => {
+  if (listRefreshTimer.value) {
+    clearInterval(listRefreshTimer.value)
+    listRefreshTimer.value = null
+  }
 })
 </script>
 
