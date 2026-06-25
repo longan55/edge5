@@ -32,7 +32,8 @@ func SetupRouter(mode string) *gin.Engine {
 
 	deviceRepo := repository.NewDeviceRepository(global.DB)
 	deviceStatusRepo := repository.NewDeviceStatusRepository(global.DB)
-	deviceService := service.NewDeviceService(deviceRepo, deviceStatusRepo)
+	taskRepo := repository.NewTaskRepository(global.DB, global.Logger)
+	deviceService := service.NewDeviceService(deviceRepo, deviceStatusRepo, taskRepo)
 	deviceHandler := handler.NewDeviceHandler(deviceService)
 
 	r.GET("/api/captcha", authHandler.GetCaptcha)

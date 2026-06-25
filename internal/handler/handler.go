@@ -440,7 +440,7 @@ func (h *DeviceHandler) Delete(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 
 	if err := h.service.DeleteDevice(id); err != nil {
-		response.Error(c, response.CodeError, "删除设备失败")
+		response.Error(c, response.CodeError, err.Error())
 		return
 	}
 

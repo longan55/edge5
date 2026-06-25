@@ -5,6 +5,7 @@ import (
 	"edge5/internal/model"
 	"edge5/internal/repository"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -213,12 +214,14 @@ var (
 type DeviceService struct {
 	deviceRepo       *repository.DeviceRepository
 	deviceStatusRepo *repository.DeviceStatusRepository
+	taskRepo         *repository.TaskRepository
 }
 
-func NewDeviceService(deviceRepo *repository.DeviceRepository, deviceStatusRepo *repository.DeviceStatusRepository) *DeviceService {
+func NewDeviceService(deviceRepo *repository.DeviceRepository, deviceStatusRepo *repository.DeviceStatusRepository, taskRepo *repository.TaskRepository) *DeviceService {
 	return &DeviceService{
 		deviceRepo:       deviceRepo,
 		deviceStatusRepo: deviceStatusRepo,
+		taskRepo:         taskRepo,
 	}
 }
 
@@ -231,6 +234,15 @@ func (s *DeviceService) UpdateDevice(device *model.Device) error {
 }
 
 func (s *DeviceService) DeleteDevice(id uint64) error {
+	if s.taskRepo != nil {
+		tasks, err := s.taskRepo.ListByDeviceID(id)
+		if err != nil {
+			return fmt.Errorf("检查任务绑定失败: %w", err)
+		}
+		if len(tasks) > 0 {
+			return fmt.Errorf("设备存在绑定的任务，请先删除任务后再重试")
+		}
+	}
 	return s.deviceRepo.Delete(id)
 }
 
