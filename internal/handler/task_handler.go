@@ -23,7 +23,7 @@ func NewTaskHandler(dbLogger *zap.Logger) *TaskHandler {
 	repo := repository.NewTaskRepository(global.DB, dbLogger)
 	deviceRepo := repository.NewDeviceRepository(global.DB)
 	service.NewTaskScheduler(repo, deviceRepo, dbLogger)
-	svc := service.NewTaskService(repo, dbLogger)
+	svc := service.NewTaskService(repo, deviceRepo, dbLogger)
 	if err := repo.AutoMigrate(); err != nil {
 		dbLogger.Error("Task 自动建表失败", zap.Error(err))
 	}

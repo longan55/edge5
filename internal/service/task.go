@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
 
+	"edge5/config"
 	"edge5/global"
 	"edge5/internal/model"
 	"edge5/internal/pkg/cache"
@@ -17,6 +19,56 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+func buildTopicFromTemplate(deviceID uint64, deviceSn string) string {
+	topicRepo := repository.NewMQTTTopicRepository(global.DB)
+
+	cfg, err := topicRepo.GetConfig(config.CONFIG.Gateway.SN)
+	if err != nil || cfg == nil {
+		cfg = &model.MQTTTopicConfig{
+			Prefix:        "/aixot",
+			UpKeyword:     "up",
+			DownKeyword:   "down",
+			ShowDirection: true,
+		}
+	}
+
+	template, err := topicRepo.GetByKey("device_data_up")
+	if err != nil || template == nil {
+		templates := repository.GetDefaultTopics()
+		for _, t := range templates {
+			if t.Key == "device_data_up" {
+				template = t
+				break
+			}
+		}
+	}
+
+	if template == nil {
+		return fmt.Sprintf("/aixot/up/%s/%s/data", config.CONFIG.Gateway.SN, deviceSn)
+	}
+
+	prefix := cfg.Prefix
+	if prefix == "" {
+		prefix = template.Prefix
+		if prefix == "" {
+			prefix = "/aixot"
+		}
+	}
+
+	direction := template.Direction
+	if direction == "up" && cfg.UpKeyword != "" {
+		direction = cfg.UpKeyword
+	}
+
+	path := template.Path
+	path = strings.ReplaceAll(path, "{gatewaySn}", config.CONFIG.Gateway.SN)
+	if deviceSn != "" {
+		path = strings.ReplaceAll(path, "{deviceSn}", deviceSn)
+	}
+
+	return prefix + "/" + direction + "/" + path
+}
 
 const maxCacheSize = 10
 
@@ -521,15 +573,23 @@ func (s *TaskScheduler) StartAllEnabledTasks() error {
 }
 
 type TaskService struct {
-	repo   *repository.TaskRepository
-	logger *zap.Logger
+	repo        *repository.TaskRepository
+	deviceRepo  *repository.DeviceRepository
+	logger      *zap.Logger
 }
 
-func NewTaskService(repo *repository.TaskRepository, logger *zap.Logger) *TaskService {
-	return &TaskService{repo: repo, logger: logger}
+func NewTaskService(repo *repository.TaskRepository, deviceRepo *repository.DeviceRepository, logger *zap.Logger) *TaskService {
+	return &TaskService{repo: repo, deviceRepo: deviceRepo, logger: logger}
 }
 
 func (s *TaskService) Create(task *model.Task) error {
+	if task.UpTopic == "" {
+		device, err := s.deviceRepo.GetByID(task.DeviceID)
+		if err != nil {
+			return fmt.Errorf("获取设备信息失败: %w", err)
+		}
+		task.UpTopic = buildTopicFromTemplate(task.DeviceID, device.DeviceSn)
+	}
 	return s.repo.Create(task)
 }
 

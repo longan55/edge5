@@ -20,6 +20,15 @@ func (r *MQTTTopicRepository) List() ([]*model.MQTTTopicTemplate, error) {
 	return topics, err
 }
 
+func (r *MQTTTopicRepository) GetByKey(key string) (*model.MQTTTopicTemplate, error) {
+	var topic model.MQTTTopicTemplate
+	err := r.db.Where("key = ?", key).First(&topic).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return &topic, err
+}
+
 func (r *MQTTTopicRepository) BatchSave(topics []*model.MQTTTopicTemplate) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		for _, topic := range topics {
