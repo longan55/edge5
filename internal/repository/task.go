@@ -52,7 +52,7 @@ func (r *TaskRepository) List(page, pageSize int, name string) ([]model.Task, in
 		return nil, 0, err
 	}
 	offset := (page - 1) * pageSize
-	if err := query.Order("id DESC").Offset(offset).Limit(pageSize).Find(&tasks).Error; err != nil {
+	if err := query.Order("id ASC").Offset(offset).Limit(pageSize).Find(&tasks).Error; err != nil {
 		return nil, 0, err
 	}
 	return tasks, total, nil
