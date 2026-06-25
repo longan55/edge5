@@ -133,8 +133,13 @@ const activities = ref([
 ])
 
 let uptimeInterval = null
+let isFetching = false
 
 const fetchStats = async () => {
+  if (isFetching) {
+    return
+  }
+  isFetching = true
   try {
     const requests = [request.get('/device/list?page=1&page_size=1')]
 
@@ -163,6 +168,8 @@ const fetchStats = async () => {
     }
   } catch (error) {
     console.error('获取统计数据失败:', error)
+  } finally {
+    isFetching = false
   }
 }
 
@@ -256,12 +263,13 @@ const startCooldown = () => {
 
 onMounted(() => {
   fetchStats()
-  setInterval(fetchStats, 60000)
+  uptimeInterval = setInterval(fetchStats, 10000)
 })
 
 onUnmounted(() => {
   if (uptimeInterval) {
     clearInterval(uptimeInterval)
+    uptimeInterval = null
   }
 })
 </script>
