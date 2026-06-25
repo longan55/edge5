@@ -361,7 +361,8 @@ func startMQTTBusiness() {
 
 	deviceRepo := repository.NewDeviceRepository(global.DB)
 	deviceStatusRepo := repository.NewDeviceStatusRepository(global.DB)
-	mqttBusiness := service.NewMQTTBusinessService(deviceRepo, deviceStatusRepo, mqttRepo, global.Logger)
+	systemMonitor := service.NewSystemMonitor(global.Logger)
+	mqttBusiness := service.NewMQTTBusinessService(deviceRepo, deviceStatusRepo, mqttRepo, systemMonitor, global.Logger)
 
 	// 保存到全局变量（用于热更新）
 	global.MQTTBusinessService = mqttBusiness

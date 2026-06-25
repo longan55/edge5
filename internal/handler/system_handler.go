@@ -25,5 +25,12 @@ func (h *SystemHandler) GetStatus(c *gin.Context) {
 	}
 	status["mqttConnected"] = mqttConnected
 
+	// 添加系统资源信息
+	systemMonitor := service.GetSystemMonitor()
+	if systemMonitor != nil {
+		resources := systemMonitor.GetResources()
+		status["resources"] = resources
+	}
+
 	response.Success(c, status)
 }

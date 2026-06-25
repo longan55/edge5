@@ -74,6 +74,36 @@
     </el-row>
 
     <el-row :gutter="20" style="margin-top: 20px">
+      <el-col :span="8">
+        <el-card>
+          <template #header>
+            <span>CPU 使用</span>
+            <span style="float: right; font-size: 14px; color: #909399">{{ resources.cpuUsedPercent.toFixed(2) }}%</span>
+          </template>
+          <el-progress :percentage="resources.cpuUsedPercent" :color="getProgressColor(resources.cpuUsedPercent)" />
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card>
+          <template #header>
+            <span>内存使用</span>
+            <span style="float: right; font-size: 14px; color: #909399">{{ formatBytes(resources.memUsed) }} / {{ formatBytes(resources.memTotal) }} ({{ resources.memUsedPercent.toFixed(2) }}%)</span>
+          </template>
+          <el-progress :percentage="resources.memUsedPercent" :color="getProgressColor(resources.memUsedPercent)" />
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card>
+          <template #header>
+            <span>磁盘使用</span>
+            <span style="float: right; font-size: 14px; color: #909399">{{ formatBytes(resources.diskUsed) }} / {{ formatBytes(resources.diskTotal) }} ({{ resources.diskUsedPercent.toFixed(2) }}%)</span>
+          </template>
+          <el-progress :percentage="resources.diskUsedPercent" :color="getProgressColor(resources.diskUsedPercent)" />
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" style="margin-top: 20px">
       <el-col :span="12">
         <el-card>
           <template #header>
@@ -132,6 +162,16 @@ const activities = ref([
   { content: '系统启动', timestamp: new Date().toLocaleString() }
 ])
 
+const resources = ref({
+  cpuUsedPercent: 0,
+  memTotal: 0,
+  memUsed: 0,
+  memUsedPercent: 0,
+  diskTotal: 0,
+  diskUsed: 0,
+  diskUsedPercent: 0
+})
+
 let uptimeInterval = null
 let isFetching = false
 
@@ -143,27 +183,37 @@ const fetchStats = async () => {
   try {
     const requests = [request.get('/device/list?page=1&page_size=1')]
 
-    // 只有登录后才调用mqtt/status接口
+    // 只有登录后才调用system/status接口
     if (userStore.token) {
-      requests.push(request.get('/mqtt/status'))
+      requests.push(request.get('/system/status'))
     }
 
     const responses = await Promise.all(requests)
     const deviceRes = responses[0]
-    const mqttRes = responses[1]
+    const systemRes = responses[1]
 
     stats.value.deviceTotal = deviceRes.data?.total || 0
 
     const deviceList = deviceRes.data?.list || []
     stats.value.deviceOnline = deviceList.filter(d => d.online).length
 
-    if (mqttRes) {
-      mqttConnected.value = mqttRes.data?.connected || false
+    if (systemRes) {
+      mqttConnected.value = systemRes.data?.mqttConnected || false
 
-      // 解析后端返回的 uptime 字符串，格式如 "up 0 days, 8 hours, 1 minute"
-      const uptimeStr = mqttRes.data?.uptime || ''
+      const uptimeStr = systemRes.data?.uptime || ''
       if (uptimeStr) {
         uptime.value = parseUptime(uptimeStr)
+      }
+
+      const resData = systemRes.data?.resources || {}
+      resources.value = {
+        cpuUsedPercent: resData.cpuUsedPercent || 0,
+        memTotal: resData.memTotal || 0,
+        memUsed: resData.memUsed || 0,
+        memUsedPercent: resData.memUsedPercent || 0,
+        diskTotal: resData.diskTotal || 0,
+        diskUsed: resData.diskUsed || 0,
+        diskUsedPercent: resData.diskUsedPercent || 0
       }
     }
   } catch (error) {
@@ -191,20 +241,34 @@ const parseUptime = (str) => {
 
 const updateUptime = async () => {
   // 只更新 uptime，不重复调用 fetchStats
-  // 只有登录后才调用mqtt/status接口
+  // 只有登录后才调用system/status接口
   if (!userStore.token) {
     return
   }
 
   try {
-    const mqttRes = await request.get('/mqtt/status')
-    const uptimeStr = mqttRes.data?.uptime || ''
+    const systemRes = await request.get('/system/status')
+    const uptimeStr = systemRes.data?.uptime || ''
     if (uptimeStr) {
       uptime.value = parseUptime(uptimeStr)
     }
   } catch (error) {
     console.error('获取运行时间失败:', error)
   }
+}
+
+const formatBytes = (bytes) => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+const getProgressColor = (percent) => {
+  if (percent >= 90) return '#F56C6C'
+  if (percent >= 70) return '#E6A23C'
+  return '#67C23A'
 }
 
 // 测试设备连接

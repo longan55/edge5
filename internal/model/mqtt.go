@@ -107,11 +107,15 @@ type HeartbeatPayload struct {
 
 // GatewayPropertiesPayload 网关状态上报负载
 type GatewayPropertiesPayload struct {
-	CPUUsage    float64 `json:"cpuUsage"`
-	MemoryUsage float64 `json:"memoryUsage"`
-	DiskUsage   float64 `json:"diskUsage"`
-	Uptime      int64   `json:"uptime"`
-	Temperature float64 `json:"temperature,omitempty"`
+	CPUUsage        float64 `json:"cpuUsage"`
+	MemTotal        uint64  `json:"memTotal"`
+	MemUsed         uint64  `json:"memUsed"`
+	MemoryUsage     float64 `json:"memoryUsage"`
+	DiskTotal       uint64  `json:"diskTotal"`
+	DiskUsed        uint64  `json:"diskUsed"`
+	DiskUsage       float64 `json:"diskUsage"`
+	Uptime          int64   `json:"uptime"`
+	Temperature     float64 `json:"temperature,omitempty"`
 }
 
 // ─── 设备注册 ───

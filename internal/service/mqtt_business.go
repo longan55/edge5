@@ -26,6 +26,7 @@ type MQTTBusinessService struct {
 	deviceRepo       *repository.DeviceRepository
 	deviceStatusRepo *repository.DeviceStatusRepository
 	mqttRepo         *repository.MQTTConfigRepository
+	systemMonitor    *SystemMonitor
 
 	ctx    context.Context // 整个服务的生命周期
 	cancel context.CancelFunc
@@ -39,6 +40,7 @@ func NewMQTTBusinessService(
 	deviceRepo *repository.DeviceRepository,
 	deviceStatusRepo *repository.DeviceStatusRepository,
 	mqttRepo *repository.MQTTConfigRepository,
+	systemMonitor *SystemMonitor,
 	logger *zap.Logger,
 ) *MQTTBusinessService {
 	return &MQTTBusinessService{
@@ -47,6 +49,7 @@ func NewMQTTBusinessService(
 		deviceRepo:       deviceRepo,
 		deviceStatusRepo: deviceStatusRepo,
 		mqttRepo:         mqttRepo,
+		systemMonitor:    systemMonitor,
 		topicTemplates:   make(map[string]*model.MQTTTopicTemplate),
 	}
 }
@@ -525,14 +528,26 @@ func (s *MQTTBusinessService) propertiesLoop() {
 }
 
 func (s *MQTTBusinessService) collectGatewayProperties() *model.GatewayPropertiesPayload {
-	// TODO: 实现实际系统信息采集（CPU/内存/磁盘/温度等）
-	return &model.GatewayPropertiesPayload{
+	payload := &model.GatewayPropertiesPayload{
 		CPUUsage:    0,
 		MemoryUsage: 0,
 		DiskUsage:   0,
 		Uptime:      time.Now().Unix(),
 		Temperature: 0,
 	}
+
+	if s.systemMonitor != nil {
+		resources := s.systemMonitor.GetResources()
+		payload.CPUUsage = resources.CPUUsedPercent
+		payload.MemTotal = resources.MemTotal
+		payload.MemUsed = resources.MemUsed
+		payload.MemoryUsage = resources.MemUsedPercent
+		payload.DiskTotal = resources.DiskTotal
+		payload.DiskUsed = resources.DiskUsed
+		payload.DiskUsage = resources.DiskUsedPercent
+	}
+
+	return payload
 }
 
 // ─── 订阅下行主题 ───
