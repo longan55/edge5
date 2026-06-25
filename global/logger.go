@@ -20,6 +20,8 @@ func InitLogger() error {
 		return fmt.Errorf("create log dir [%s] error: %w", config.CONFIG.Log.Path, err)
 	}
 
+	cleanExpiredLogs(config.CONFIG.Log.Path, config.CONFIG.Log.MaxAge)
+
 	writer, err := rotate.New(
 		path.Join(config.CONFIG.Log.Path, config.CONFIG.Log.Pattern),
 		rotate.WithLinkName(path.Join(config.CONFIG.Log.Path, "latest.log")),
@@ -133,4 +135,36 @@ func compressLog(event rotate.Event) {
 	}
 
 	os.Remove(prePath)
+}
+
+func cleanExpiredLogs(logPath string, maxAgeDays int) {
+	maxAge := time.Duration(maxAgeDays) * 24 * time.Hour
+	cutoff := time.Now().Add(-maxAge)
+
+	files, err := os.ReadDir(logPath)
+	if err != nil {
+		return
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		name := file.Name()
+		if !(len(name) >= 12 && name[8] == '.' && name[9:12] == "log") &&
+			!(len(name) >= 18 && name[:6] == "error." && name[14] == '.' && name[15:18] == "log") {
+			continue
+		}
+
+		filePath := path.Join(logPath, name)
+		info, err := os.Stat(filePath)
+		if err != nil {
+			continue
+		}
+
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(filePath)
+		}
+	}
 }

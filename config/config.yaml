@@ -13,13 +13,6 @@ database:
   type: "sqlite3"
   sqlite3:
     path: "./data/edge5.db"
-  postgresql:
-    host: "localhost"
-    port: 5432
-    user: "edge5"
-    password: "password"
-    dbname: "edge5"
-    sslmode: "disable"
 
 cache:
   type: "boltdb"
@@ -58,7 +51,7 @@ mqtt:
   request_problem: false
 
 log:
-  level: "debug"
+  level: "info"
   path: "./logs"
   pattern: "%Y%m%d.log"
   max_age: 7
