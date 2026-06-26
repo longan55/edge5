@@ -9,6 +9,8 @@ import (
 	"edge5/internal/pkg/connector"
 	"edge5/internal/pkg/protocol"
 	_ "edge5/internal/pkg/protocol/builtin"
+	_ "edge5/internal/pkg/protocol/builtin/mcprotocol"
+	_ "edge5/internal/pkg/protocol/builtin/mitcncprotocol"
 	"edge5/internal/repository"
 	"edge5/internal/router"
 	"edge5/internal/service"

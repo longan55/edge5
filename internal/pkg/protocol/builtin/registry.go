@@ -10,18 +10,18 @@ import (
 	"go.uber.org/zap"
 )
 
-var logger *zap.Logger
+var Logger *zap.Logger
 
 // SetLogger 设置日志记录器
 func SetLogger(l *zap.Logger) {
-	logger = l
+	Logger = l
 }
 
 // Register 注册一个内置协议到全局注册表
 func Register(p protocol.DeviceCommProtocol) error {
 	reg := protocol.DefaultRegistry()
-	if logger != nil {
-		logger.Info("注册内置协议",
+	if Logger != nil {
+		Logger.Info("注册内置协议",
 			zap.String("name", protocol.GetInfoString(p.Info(), "name")),
 		)
 	}
