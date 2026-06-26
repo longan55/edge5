@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 
 	"edge5/config"
@@ -20,9 +19,7 @@ import (
 type MQTTBusinessService struct {
 	logger           *zap.Logger
 	gatewaySN        string
-	topicCfg         *model.MQTTTopicConfig
-	topicTemplates   map[string]*model.MQTTTopicTemplate // 主题模板缓存
-	subscribedTopics []string                            // 已订阅的主题列表（用于热更新取消订阅）
+	subscribedTopics []string // 已订阅的主题列表（用于热更新取消订阅）
 	deviceRepo       *repository.DeviceRepository
 	deviceStatusRepo *repository.DeviceStatusRepository
 	mqttRepo         *repository.MQTTConfigRepository
@@ -50,7 +47,6 @@ func NewMQTTBusinessService(
 		deviceStatusRepo: deviceStatusRepo,
 		mqttRepo:         mqttRepo,
 		systemMonitor:    systemMonitor,
-		topicTemplates:   make(map[string]*model.MQTTTopicTemplate),
 	}
 }
 
@@ -66,9 +62,6 @@ func (s *MQTTBusinessService) Start() {
 		s.logger.Warn("MQTT 业务服务：上下文已取消，退出")
 		return
 	}
-
-	// 加载主题配置和模板（缓存到内存）
-	s.loadTopicConfigAndTemplates()
 
 	// 订阅下行主题
 	s.subscribeDownlinkTopics()
@@ -108,119 +101,9 @@ func (s *MQTTBusinessService) waitForConnectionLoop() bool {
 
 // ─── 主题配置与模板加载 ───
 
-func (s *MQTTBusinessService) loadTopicConfigAndTemplates() {
-	topicRepo := repository.NewMQTTTopicRepository(global.DB)
-
-	// 加载全局主题配置
-	cfg, err := topicRepo.GetConfig(s.gatewaySN)
-	if err != nil || cfg == nil {
-		s.logger.Warn("加载主题配置失败，使用默认值", zap.Error(err))
-		s.topicCfg = &model.MQTTTopicConfig{
-			Prefix:        "/aixot",
-			UpKeyword:     "up",
-			DownKeyword:   "down",
-			ShowDirection: true,
-		}
-	} else {
-		s.topicCfg = cfg
-	}
-
-	// 加载所有主题模板并缓存
-	templates, err := topicRepo.List()
-	if err != nil {
-		s.logger.Warn("加载主题模板失败，使用内置默认值", zap.Error(err))
-		// 使用内置默认模板
-		for _, t := range repository.GetDefaultTopics() {
-			s.topicTemplates[t.Key] = t
-		}
-	} else {
-		for _, t := range templates {
-			s.topicTemplates[t.Key] = t
-		}
-	}
-
-	s.logger.Info("主题配置加载完成",
-		zap.String("prefix", s.topicCfg.Prefix),
-		zap.String("up_keyword", s.topicCfg.UpKeyword),
-		zap.String("down_keyword", s.topicCfg.DownKeyword),
-		zap.Int("templates_count", len(s.topicTemplates)),
-	)
-}
-
-// buildTopicFromTemplate 根据模板 key 构建完整主题路径
-// 支持 path 中的变量替换：{gatewaySn} -> s.gatewaySN, {deviceSn} -> deviceSn
-func (s *MQTTBusinessService) buildTopicFromTemplate(key string, deviceSn string) string {
-	template, ok := s.topicTemplates[key]
-	if !ok {
-		s.logger.Warn("主题模板不存在，使用 key 作为路径", zap.String("key", key))
-		// fallback: 使用 key 作为路径
-		return s.buildTopicFallback(key, deviceSn)
-	}
-
-	// 使用全局配置的 prefix（优先级高于模板中的 prefix）
-	prefix := s.topicCfg.Prefix
-	if prefix == "" {
-		prefix = template.Prefix
-		if prefix == "" {
-			prefix = "/aixot"
-		}
-	}
-
-	// 使用全局配置的 direction 关键词
-	direction := template.Direction
-	if direction == "up" && s.topicCfg.UpKeyword != "" {
-		direction = s.topicCfg.UpKeyword
-	} else if direction == "down" && s.topicCfg.DownKeyword != "" {
-		direction = s.topicCfg.DownKeyword
-	}
-
-	// 替换 path 中的变量
-	path := template.Path
-	path = strings.ReplaceAll(path, "{gatewaySn}", s.gatewaySN)
-	if deviceSn != "" {
-		path = strings.ReplaceAll(path, "{deviceSn}", deviceSn)
-	}
-
-	// 构建完整主题：prefix/direction/path
-	// 注意：prefix 通常以 / 开头，如 "/aixot"
-	topic := prefix + "/" + direction + "/" + path
-	return topic
-}
-
-// buildTopicFallback 当模板不存在时的 fallback 构建
-func (s *MQTTBusinessService) buildTopicFallback(key string, deviceSn string) string {
-	// 根据 key 推断方向和路径
-	var direction, path string
-	if strings.HasSuffix(key, "_up") {
-		direction = s.topicCfg.UpKeyword
-		if direction == "" {
-			direction = "up"
-		}
-		path = strings.TrimSuffix(key, "_up")
-	} else if strings.HasSuffix(key, "_down") || strings.HasSuffix(key, "_down_ack") {
-		direction = s.topicCfg.DownKeyword
-		if direction == "" {
-			direction = "down"
-		}
-		path = strings.TrimSuffix(key, "_down_ack")
-		path = strings.TrimSuffix(path, "_down")
-	} else {
-		direction = s.topicCfg.UpKeyword
-		path = key
-	}
-
-	// 替换变量
-	path = strings.ReplaceAll(path, "{gatewaySn}", s.gatewaySN)
-	if deviceSn != "" {
-		path = strings.ReplaceAll(path, "{deviceSn}", deviceSn)
-	}
-
-	prefix := s.topicCfg.Prefix
-	if prefix == "" {
-		prefix = "/aixot"
-	}
-
-	return prefix + "/" + direction + "/" + path
+// buildTopic 委托给 MessageBuilder 构建主题
+func (s *MQTTBusinessService) buildTopic(key string, deviceSn string) string {
+	return GetMessageBuilder().BuildTopic(key, deviceSn)
 }
 
 // ─── 发布工具 ───
@@ -244,17 +127,6 @@ func (s *MQTTBusinessService) publish(topic string, payload interface{}) error {
 
 	s.logger.Debug("MQTT 发布消息", zap.String("topic", topic), zap.Int("len", len(data)))
 	return nil
-}
-
-func (s *MQTTBusinessService) buildGatewayMessage(payload interface{}) *model.MQTTGatewayMessage {
-	raw, _ := json.Marshal(payload)
-	return &model.MQTTGatewayMessage{
-		Version:   "1.0",
-		GatewaySn: s.gatewaySN,
-		Timestamp: time.Now().UnixMilli(),
-		RequestID: model.GenerateRequestID(),
-		Payload:   raw,
-	}
 }
 
 // ─── 注册状态机 ───
@@ -313,7 +185,7 @@ func (s *MQTTBusinessService) doRegister() bool {
 		}
 	}
 	// 使用模板构建主题
-	topic := s.buildTopicFromTemplate("register_up", "")
+	topic := s.buildTopic("register_up", "")
 	s.logger.Info("启动网关注册发送", zap.String("topic", topic))
 
 	payload := model.GatewayRegisterPayload{
@@ -324,7 +196,7 @@ func (s *MQTTBusinessService) doRegister() bool {
 		MAC:             "",
 	}
 
-	msg := s.buildGatewayMessage(payload)
+	msg := GetMessageBuilder().BuildGatewayMessage(payload)
 
 	// 立即发送第一帧
 	s.publishGatewayRegister(topic, msg)
@@ -448,7 +320,7 @@ func (s *MQTTBusinessService) deviceRegisterLoop() {
 
 func (s *MQTTBusinessService) registerDevice(device *model.Device) {
 	// 使用模板构建主题
-	topic := s.buildTopicFromTemplate("device_register_up", "")
+	topic := s.buildTopic("device_register_up", "")
 	s.logger.Info("注册设备", zap.String("device_sn", device.DeviceSn), zap.String("topic", topic))
 
 	payload := model.DeviceRegisterPayload{
@@ -459,7 +331,7 @@ func (s *MQTTBusinessService) registerDevice(device *model.Device) {
 		Protocol:   device.Protocol,
 	}
 
-	msg := s.buildGatewayMessage(payload)
+	msg := GetMessageBuilder().BuildGatewayMessage(payload)
 	s.publish(topic, msg)
 }
 
@@ -494,11 +366,11 @@ func (s *MQTTBusinessService) heartbeatLoop() {
 			return
 		case <-ticker.C:
 			// 每次发送时动态构建主题（支持热更新）
-			topic := s.buildTopicFromTemplate("heartbeat_up", "")
+			topic := s.buildTopic("heartbeat_up", "")
 			payload := model.HeartbeatPayload{
 				Timestamp: time.Now().UnixMilli(),
 			}
-			msg := s.buildGatewayMessage(payload)
+			msg := GetMessageBuilder().BuildGatewayMessage(payload)
 			s.publish(topic, msg)
 		}
 	}
@@ -519,9 +391,9 @@ func (s *MQTTBusinessService) propertiesLoop() {
 			return
 		case <-ticker.C:
 			// 每次发送时动态构建主题（支持热更新）
-			topic := s.buildTopicFromTemplate("gateway_status_up", "")
+			topic := s.buildTopic("gateway_status_up", "")
 			payload := s.collectGatewayProperties()
-			msg := s.buildGatewayMessage(payload)
+			msg := GetMessageBuilder().BuildGatewayMessage(payload)
 			s.publish(topic, msg)
 		}
 	}
@@ -559,24 +431,24 @@ func (s *MQTTBusinessService) subscribeDownlinkTopics() {
 	s.subscribedTopics = []string{}
 
 	// 1. 网关注册响应
-	topic1 := s.buildTopicFromTemplate("register_down_ack", "")
+	topic1 := s.buildTopic("register_down_ack", "")
 	s.subscribe(topic1, qos, s.handleGatewayRegisterAckMessage)
 
 	// 2. 网关指令下发（含 init 注销指令）
-	topic2 := s.buildTopicFromTemplate("gateway_cmd_down", "")
+	topic2 := s.buildTopic("gateway_cmd_down", "")
 	s.subscribe(topic2, qos, s.handleGatewayCommand)
 
 	// 3. 设备注册响应
-	topic3 := s.buildTopicFromTemplate("device_register_down_ack", "")
+	topic3 := s.buildTopic("device_register_down_ack", "")
 	s.subscribe(topic3, qos, s.handleDeviceRegisterAckMessage)
 
 	// 4. 设备指令下发（通配订阅所有设备）
 	// 注意：模板 path 为 "{gatewaySn}/{deviceSn}/command"，订阅时需要用 MQTT 通配符
-	topic4 := s.buildTopicFromTemplate("device_cmd_down", "+") // deviceSn 用 + 通配
+	topic4 := s.buildTopic("device_cmd_down", "+") // deviceSn 用 + 通配
 	s.subscribe(topic4, qos, s.handleDeviceCommand)
 
 	// 5. 设备指令响应（通配订阅所有设备）
-	topic5 := s.buildTopicFromTemplate("device_cmd_reply_up", "+") // deviceSn 用 + 通配
+	topic5 := s.buildTopic("device_cmd_reply_up", "+") // deviceSn 用 + 通配
 	s.subscribe(topic5, qos, s.handleDeviceCommandReply)
 
 	s.logger.Info("下行主题订阅完成",
@@ -617,7 +489,7 @@ func (s *MQTTBusinessService) ReloadConfig() error {
 	s.unsubscribeAll()
 
 	// 2. 重新加载配置和模板
-	s.loadTopicConfigAndTemplates()
+	GetMessageBuilder().ReloadTopicConfig()
 
 	// 3. 重新订阅下行主题
 	s.subscribeDownlinkTopics()
@@ -694,7 +566,7 @@ func (s *MQTTBusinessService) handleGatewayCommand(_ mqtt.Client, msg mqtt.Messa
 
 func (s *MQTTBusinessService) replyGatewayCommand(requestID, command string, result int, message string) {
 	// 使用模板构建主题
-	topic := s.buildTopicFromTemplate("cmd_reply_up", "")
+	topic := s.buildTopic("cmd_reply_up", "")
 	resp := model.CommandResponse{
 		GatewaySn: s.gatewaySN,
 		Timestamp: time.Now().UnixMilli(),
@@ -723,8 +595,8 @@ func (s *MQTTBusinessService) handleDeviceCommandReply(_ mqtt.Client, msg mqtt.M
 // PublishDeviceData 发布设备数据到平台
 func (s *MQTTBusinessService) PublishDeviceData(deviceSn string, data interface{}) error {
 	// 使用模板构建主题
-	topic := s.buildTopicFromTemplate("device_data_up", deviceSn)
+	topic := s.buildTopic("device_data_up", deviceSn)
 
-	msg := s.buildGatewayMessage(data)
+	msg := GetMessageBuilder().BuildGatewayMessage(data)
 	return s.publish(topic, msg)
 }

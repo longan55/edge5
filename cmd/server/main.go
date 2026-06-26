@@ -71,6 +71,9 @@ func run() error {
 		})
 	}
 
+	// 初始化消息构建器（统一的 MQTTGatewayMessage 格式，独立于上报协议）
+	service.NewMessageBuilder(global.Logger)
+
 	// 启动 MQTT 业务服务（网关注册、心跳、状态上报、订阅下行主题）
 	startMQTTBusiness()
 

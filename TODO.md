@@ -1,4 +1,3 @@
-TODO: 系统资源（CPU、内存、磁盘、网络）参数上报；
 TODO: mqtt数据模型定义；
 TODO: json数据格式变换功能[kazzen](https://github.com/qntfy/kazaam)；
 TODO: 协议管理界面；

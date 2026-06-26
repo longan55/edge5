@@ -8,21 +8,21 @@ import (
 )
 
 type MQTTConfig struct {
-	ID        uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
-	Broker    string    `gorm:"size:256;not null" json:"broker"`
-	Protocol  string    `gorm:"size:16;default:'mqtt://'" json:"protocol"`
-	Host      string    `gorm:"size:128" json:"host"`
-	Port      int       `gorm:"not null" json:"port"`
-	Username  string    `gorm:"size:64" json:"username"`
-	Password  string    `gorm:"size:128" json:"password"`
-	ClientID  string    `gorm:"size:64;not null" json:"client_id"`
-	KeepAlive int       `gorm:"default:60" json:"keep_alive"`
-	QoS       int8      `gorm:"default:1" json:"qos"`
-	On                  bool      `gorm:"default:false" json:"on"`
-	Registered          bool      `gorm:"default:false" json:"registered"`
-	GatewaySN           string    `gorm:"size:64;uniqueIndex;not null" json:"gateway_sn"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	ID         uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	Broker     string    `gorm:"size:256;not null" json:"broker"`
+	Protocol   string    `gorm:"size:16;default:'mqtt://'" json:"protocol"`
+	Host       string    `gorm:"size:128" json:"host"`
+	Port       int       `gorm:"not null" json:"port"`
+	Username   string    `gorm:"size:64" json:"username"`
+	Password   string    `gorm:"size:128" json:"password"`
+	ClientID   string    `gorm:"size:64;not null" json:"client_id"`
+	KeepAlive  int       `gorm:"default:60" json:"keep_alive"`
+	QoS        int8      `gorm:"default:1" json:"qos"`
+	On         bool      `gorm:"default:false" json:"on"`
+	Registered bool      `gorm:"default:false" json:"registered"`
+	GatewaySN  string    `gorm:"size:64;uniqueIndex;not null" json:"gateway_sn"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 
 	// SSL/TLS settings
 	SSL       bool   `gorm:"default:false" json:"ssl"`
@@ -62,11 +62,16 @@ func GenerateRequestID() string {
 
 // MQTTGatewayMessage 网关上行/下行通用消息体
 type MQTTGatewayMessage struct {
-	Version   string          `json:"version"`
-	GatewaySn string          `json:"gatewaySn"`
-	Timestamp int64           `json:"timestamp"`
-	RequestID string          `json:"requestId"`
-	Payload   json.RawMessage `json:"payload"`
+	Version    string          `json:"version"`
+	GatewaySn  string          `json:"gatewaySn"`
+	DeviceSn   string          `json:"deviceSn,omitempty"`
+	TaskID     uint64          `json:"taskId,omitempty"`
+	DeviceType string          `json:"deviceType,omitempty"`
+	Brand      string          `json:"brand,omitempty"`
+	Model      string          `json:"model,omitempty"`
+	Timestamp  int64           `json:"timestamp"`
+	RequestID  string          `json:"requestId"`
+	Payload    json.RawMessage `json:"payload"`
 }
 
 // MQTTMessage 通用消息体（保留兼容）
@@ -107,15 +112,15 @@ type HeartbeatPayload struct {
 
 // GatewayPropertiesPayload 网关状态上报负载
 type GatewayPropertiesPayload struct {
-	CPUUsage        float64 `json:"cpuUsage"`
-	MemTotal        uint64  `json:"memTotal"`
-	MemUsed         uint64  `json:"memUsed"`
-	MemoryUsage     float64 `json:"memoryUsage"`
-	DiskTotal       uint64  `json:"diskTotal"`
-	DiskUsed        uint64  `json:"diskUsed"`
-	DiskUsage       float64 `json:"diskUsage"`
-	Uptime          int64   `json:"uptime"`
-	Temperature     float64 `json:"temperature,omitempty"`
+	CPUUsage    float64 `json:"cpuUsage"`
+	MemTotal    uint64  `json:"memTotal"`
+	MemUsed     uint64  `json:"memUsed"`
+	MemoryUsage float64 `json:"memoryUsage"`
+	DiskTotal   uint64  `json:"diskTotal"`
+	DiskUsed    uint64  `json:"diskUsed"`
+	DiskUsage   float64 `json:"diskUsage"`
+	Uptime      int64   `json:"uptime"`
+	Temperature float64 `json:"temperature,omitempty"`
 }
 
 // ─── 设备注册 ───

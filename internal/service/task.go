@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 	"unsafe"
 
-	"edge5/config"
 	"edge5/global"
 	"edge5/internal/model"
 	"edge5/internal/pkg/cache"
@@ -19,56 +17,6 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
-
-func buildTopicFromTemplate(deviceID uint64, deviceSn string) string {
-	topicRepo := repository.NewMQTTTopicRepository(global.DB)
-
-	cfg, err := topicRepo.GetConfig(config.CONFIG.Gateway.SN)
-	if err != nil || cfg == nil {
-		cfg = &model.MQTTTopicConfig{
-			Prefix:        "/aixot",
-			UpKeyword:     "up",
-			DownKeyword:   "down",
-			ShowDirection: true,
-		}
-	}
-
-	template, err := topicRepo.GetByKey("device_data_up")
-	if err != nil || template == nil {
-		templates := repository.GetDefaultTopics()
-		for _, t := range templates {
-			if t.Key == "device_data_up" {
-				template = t
-				break
-			}
-		}
-	}
-
-	if template == nil {
-		return fmt.Sprintf("/aixot/up/%s/%s/data", config.CONFIG.Gateway.SN, deviceSn)
-	}
-
-	prefix := cfg.Prefix
-	if prefix == "" {
-		prefix = template.Prefix
-		if prefix == "" {
-			prefix = "/aixot"
-		}
-	}
-
-	direction := template.Direction
-	if direction == "up" && cfg.UpKeyword != "" {
-		direction = cfg.UpKeyword
-	}
-
-	path := template.Path
-	path = strings.ReplaceAll(path, "{gatewaySn}", config.CONFIG.Gateway.SN)
-	if deviceSn != "" {
-		path = strings.ReplaceAll(path, "{deviceSn}", deviceSn)
-	}
-
-	return prefix + "/" + direction + "/" + path
-}
 
 const maxCacheSize = 10
 
@@ -468,15 +416,10 @@ func (s *TaskScheduler) cacheData(taskID uint64, record TaskDataRecord) {
 
 func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data map[string]interface{}) error {
 	ts := time.Now()
-	payload := map[string]interface{}{
-		"device_sn": device.DeviceSn,
-		"task_id":   task.ID,
-		"task_name": task.Name,
-		"timestamp": ts.UnixMilli(),
-		"data":      data,
-	}
 
-	jsonData, err := json.Marshal(payload)
+	// 使用 MessageBuilder 构建设备数据上报消息（payload 直接平铺业务数据）
+	gatewayMsg := GetMessageBuilder().BuildDeviceDataMessage(device.DeviceSn, device.DeviceType, device.Brand, device.DeviceName, task.ID, data)
+	jsonData, err := json.Marshal(gatewayMsg)
 	if err != nil {
 		s.logger.Error("序列化上报数据失败", zap.Uint64("taskID", task.ID), zap.Error(err))
 		return err
@@ -484,7 +427,7 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 
 	topic := task.UpTopic
 	if topic == "" {
-		topic = fmt.Sprintf("%s/data", device.DeviceSn)
+		topic = GetMessageBuilder().BuildTopic("device_data_up", device.DeviceSn)
 	}
 
 	// 构建完整的记录用于缓存
@@ -504,7 +447,7 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 			}
 			if err := global.CacheDB.Push(msg); err != nil {
 				s.logger.Error("缓存数据到BoltDB失败", zap.Uint64("taskID", task.ID), zap.Error(err))
-				s.cacheData(task.ID, record) // 即使持久化失败，也缓存到内存
+				s.cacheData(task.ID, record)
 				return err
 			}
 			s.logger.Info("MQTT未连接，数据已持久化缓存", zap.Uint64("taskID", task.ID))
@@ -520,7 +463,6 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 	err = global.MQTTClient.Publish(topic, byte(global.CONFIG.MQTT.QoS), jsonData)
 	if err != nil {
 		s.logger.Error("MQTT发布失败", zap.Uint64("taskID", task.ID), zap.String("topic", topic), zap.Error(err))
-		// 上报失败，缓存到 BoltDB 和内存
 		if global.CacheDB != nil {
 			msg := &cache.CacheMessage{
 				ID:        fmt.Sprintf("task_%d_%d", task.ID, ts.UnixMilli()),
@@ -537,7 +479,6 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 	}
 	s.logger.Debug("MQTT发布成功", zap.Uint64("taskID", task.ID), zap.String("topic", topic))
 
-	// 上报成功，缓存完整数据
 	record.UpState = true
 	s.cacheData(task.ID, record)
 	return nil
@@ -626,7 +567,7 @@ func (s *TaskScheduler) flushTaskCache(entry *taskEntry) {
 		// 直接发布缓存的 JSON 字符串
 		topic := entry.task.UpTopic
 		if topic == "" {
-			topic = fmt.Sprintf("%s/data", entry.device.DeviceSn)
+			topic = GetMessageBuilder().BuildTopic("device_data_up", entry.device.DeviceSn)
 		}
 		err := global.MQTTClient.Publish(topic, byte(global.CONFIG.MQTT.QoS), []byte(records[i].Data))
 		if err != nil {
@@ -676,7 +617,7 @@ func (s *TaskService) Create(task *model.Task) error {
 		if err != nil {
 			return fmt.Errorf("获取设备信息失败: %w", err)
 		}
-		task.UpTopic = buildTopicFromTemplate(task.DeviceID, device.DeviceSn)
+		task.UpTopic = GetMessageBuilder().BuildTopic("device_data_up", device.DeviceSn)
 	}
 	return s.repo.Create(task)
 }
