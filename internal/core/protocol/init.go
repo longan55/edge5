@@ -12,7 +12,7 @@ import (
 // Init 初始化协议系统
 //
 // 注意：内置协议需要在外部调用时被 import（触发 init 注册），
-// 例如在 main.go 中：import _ "edge5/internal/pkg/protocol/builtin"
+// 例如在 main.go 中：import _ "edge5/internal/core/protocol/builtin"
 func Init(db *gorm.DB, logger *zap.Logger) error {
 	if logger == nil {
 		logger = zap.NewNop()

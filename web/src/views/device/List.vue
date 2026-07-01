@@ -122,7 +122,7 @@
         </el-form-item>
 
         <el-form-item v-if="modelRelated" label="型号" prop="model">
-          <el-select v-model="deviceForm.model" placeholder="请选择" :disabled="modelOptions.length === 0">
+          <el-select v-model="deviceForm.model" placeholder="请选择" :disabled="modelOptions.length === 0" @change="handleModelChange">
             <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
           </el-select>
         </el-form-item>
@@ -415,13 +415,25 @@ const modelOptions = computed(() => {
 const protocolConnParams = computed(() => {
   if (!deviceForm.protocol) return []
   const group = deviceOptions.protocolOptions?.[deviceForm.protocol]
-  return group?.options || []
+  if (!group) return []
+  
+  const scope = group.connectionParamsScope
+  if (scope === 'model' && deviceForm.model) {
+    return group.connectionParamsByModel?.[deviceForm.model] || group.options || []
+  }
+  return group.options || []
 })
 
 const detailConnParams = computed(() => {
   if (!detailForm.protocol) return []
   const group = deviceOptions.protocolOptions?.[detailForm.protocol]
-  return group?.options || []
+  if (!group) return []
+  
+  const scope = group.connectionParamsScope
+  if (scope === 'model' && detailForm.model) {
+    return group.connectionParamsByModel?.[detailForm.model] || group.options || []
+  }
+  return group.options || []
 })
 
 const allBrandOptions = computed(() => {
@@ -598,6 +610,14 @@ const handleProtocolChange = () => {
   }
 }
 
+const handleModelChange = () => {
+  ensureConfigShape()
+  if (deviceForm.model) {
+    deviceForm.config.model = deviceForm.model
+    applyProtocolDefaults()
+  }
+}
+
 const fetchDeviceOptions = async () => {
   optionsLoading.value = true
   try {
@@ -636,7 +656,7 @@ const handleDetail = (row) => {
   detailForm.device_name = row.device_name || ''
   detailForm.device_type = (row.device_type || '').toUpperCase()
   detailForm.brand = row.brand || ''
-  detailForm.protocol = row.protocol || ''
+  detailForm.protocol = normalizeProtocol(row.protocol, detailForm.device_type)
   detailForm.online = row.online || false
   
   // 清空旧配置

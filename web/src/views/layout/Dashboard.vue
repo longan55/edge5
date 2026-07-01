@@ -110,11 +110,11 @@
             <span>系统信息</span>
           </template>
           <el-descriptions :column="2" border>
-            <el-descriptions-item label="网关SN">GWD001</el-descriptions-item>
-            <el-descriptions-item label="程序版本">v1.0.0</el-descriptions-item>
-            <el-descriptions-item label="数据库类型">SQLite3</el-descriptions-item>
-            <el-descriptions-item label="最后更新">-</el-descriptions-item>
-          </el-descriptions>
+              <el-descriptions-item label="网关SN">{{ systemInfo.sn }}</el-descriptions-item>
+              <el-descriptions-item label="程序版本">v1.0.0</el-descriptions-item>
+              <el-descriptions-item label="数据库类型">SQLite3</el-descriptions-item>
+              <el-descriptions-item label="最后更新">-</el-descriptions-item>
+            </el-descriptions>
         </el-card>
       </el-col>
 
@@ -151,6 +151,10 @@ const stats = ref({
   deviceOnline: 0
 })
 
+const systemInfo = ref({
+  sn: 'GWD001'
+})
+
 const mqttConnected = ref(false)
 const uptime = ref('0天 0时 0分')
 const isTesting = ref(false)
@@ -181,7 +185,7 @@ const fetchStats = async () => {
   }
   isFetching = true
   try {
-    const requests = [request.get('/device/list?page=1&page_size=1')]
+    const requests = [request.get('/device/list?page=1&page_size=1000')]
 
     // 只有登录后才调用system/status接口
     if (userStore.token) {
@@ -204,6 +208,8 @@ const fetchStats = async () => {
       if (uptimeStr) {
         uptime.value = parseUptime(uptimeStr)
       }
+
+      systemInfo.value.sn = systemRes.data?.sn || 'GWD001'
 
       const resData = systemRes.data?.resources || {}
       resources.value = {

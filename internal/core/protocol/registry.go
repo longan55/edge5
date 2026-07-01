@@ -2,7 +2,7 @@ package protocol
 
 import (
 	"context"
-	"edge5/internal/pkg/protocol/goplugin"
+	"edge5/internal/core/protocol/goplugin"
 	"encoding/json"
 	"fmt"
 	"os"

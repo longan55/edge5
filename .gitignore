@@ -49,3 +49,11 @@ frontend/dist/
 # Temporary
 tmp/
 temp/
+
+#builtin
+internal/core/protocol/builtin/delta/
+internal/core/protocol/builtin/inovance/
+internal/core/protocol/builtin/melsecfx/
+internal/core/protocol/builtin/mitcncprotocol/
+internal/core/protocol/builtin/panasonic/
+internal/core/protocol/builtin/s7/

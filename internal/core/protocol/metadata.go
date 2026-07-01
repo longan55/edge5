@@ -61,19 +61,20 @@ func GetInfoAlias(m Metadata) string {
 	return v
 }
 
-// MatchProtocolName 检查给定的协议名称是否匹配（支持别名）
+// MatchProtocolName 检查给定的协议名称是否匹配（支持别名和品牌）
 func MatchProtocolName(info Metadata, protocolName string) bool {
 	if info == nil || protocolName == "" {
 		return false
 	}
 	name := GetInfoString(info, "name")
 	alias := GetInfoAlias(info)
-	// 精确匹配名称或别名
-	if name == protocolName || alias == protocolName {
+	brand := GetInfoString(info, "brand")
+	// 精确匹配名称、别名或品牌
+	if name == protocolName || alias == protocolName || brand == protocolName {
 		return true
 	}
 	// 大小写不敏感匹配
-	if strings.EqualFold(name, protocolName) || strings.EqualFold(alias, protocolName) {
+	if strings.EqualFold(name, protocolName) || strings.EqualFold(alias, protocolName) || strings.EqualFold(brand, protocolName) {
 		return true
 	}
 	return false
@@ -110,6 +111,8 @@ func ExtractConnectionParams(m Metadata) []ConnectionParam {
 				for _, c := range choices {
 					cp.Choices = append(cp.Choices, toString(c))
 				}
+			} else if choices, ok := item["choices"].([]string); ok {
+				cp.Choices = choices
 			}
 			result = append(result, cp)
 		}
@@ -133,6 +136,53 @@ func ConnectionParamsFromJSON(data string) ([]ConnectionParam, error) {
 		return nil, fmt.Errorf("unmarshal connection params failed: %w", err)
 	}
 	return params, nil
+}
+
+// GetConnectionParamsScope 获取连接参数的作用域
+// "protocol" - 参数只跟协议有关（默认）
+// "model" - 参数跟型号有关，需要按型号分组
+func GetConnectionParamsScope(m Metadata) string {
+	scope := GetInfoString(m, "connectionParamsScope")
+	if scope == "" {
+		return "protocol"
+	}
+	return scope
+}
+
+// ExtractConnectionParamsByModel 从 Metadata 中抽取按型号分组的连接参数
+// Metadata 中 key="connectionParamsByModel" 且值类型为 map[string][]any
+func ExtractConnectionParamsByModel(m Metadata) map[string][]ConnectionParam {
+	raw, ok := m["connectionParamsByModel"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	result := make(map[string][]ConnectionParam)
+	for modelName, rawParams := range raw {
+		if paramsSlice, ok := rawParams.([]any); ok {
+			var params []ConnectionParam
+			for _, r := range paramsSlice {
+				if item, ok := r.(map[string]any); ok {
+					cp := ConnectionParam{
+						Name:     toString(item["name"]),
+						CName:    toString(item["cName"]),
+						Type:     toString(item["type"]),
+						Required: toBool(item["required"]),
+						Default:  toString(item["default"]),
+					}
+					if choices, ok := item["choices"].([]any); ok {
+						for _, c := range choices {
+							cp.Choices = append(cp.Choices, toString(c))
+						}
+					} else if choices, ok := item["choices"].([]string); ok {
+						cp.Choices = choices
+					}
+					params = append(params, cp)
+				}
+			}
+			result[modelName] = params
+		}
+	}
+	return result
 }
 
 func toString(v any) string {

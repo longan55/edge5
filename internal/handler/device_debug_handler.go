@@ -9,7 +9,7 @@ import (
 
 	"edge5/global"
 	"edge5/internal/model"
-	"edge5/internal/pkg/protocol"
+	"edge5/internal/core/protocol"
 	"edge5/internal/utils/response"
 
 	"github.com/gin-gonic/gin"
@@ -333,8 +333,7 @@ func parseDeviceConfigToMetadata(device *model.Device) (protocol.Metadata, error
 	}
 
 	for k, v := range configMap {
-		// 跳过插件相关字段
-		if k == "pluginHost" || k == "pluginPort" || k == "model" {
+		if k == "pluginHost" || k == "pluginPort" {
 			continue
 		}
 		result[k] = v

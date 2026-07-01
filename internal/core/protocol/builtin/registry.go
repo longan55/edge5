@@ -5,7 +5,7 @@
 package builtin
 
 import (
-	"edge5/internal/pkg/protocol"
+	"edge5/internal/core/protocol"
 
 	"go.uber.org/zap"
 )

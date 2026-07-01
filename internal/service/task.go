@@ -10,8 +10,8 @@ import (
 
 	"edge5/global"
 	"edge5/internal/model"
-	"edge5/internal/pkg/cache"
-	"edge5/internal/pkg/protocol"
+	"edge5/internal/core/cache"
+	"edge5/internal/core/protocol"
 	"edge5/internal/repository"
 
 	"go.uber.org/zap"

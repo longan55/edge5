@@ -6,7 +6,7 @@ import (
 
 	"edge5/global"
 	"edge5/internal/model"
-	"edge5/internal/pkg/protocol"
+	"edge5/internal/core/protocol"
 	"edge5/internal/repository"
 	"edge5/internal/service"
 	"edge5/internal/utils/response"

@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 	"edge5/global"
+	"edge5/internal/core/protocol"
 	"edge5/internal/model"
-	"edge5/internal/pkg/protocol"
 	"encoding/json"
 	"fmt"
 
@@ -49,7 +49,7 @@ func TestDeviceConnections() error {
 		}
 
 		var wg sync.WaitGroup
-		timeout := 100 * time.Millisecond // 0.1s 超时
+		timeout := 3 * time.Second
 
 		for _, device := range devices {
 			wg.Add(1)
@@ -84,6 +84,7 @@ func TestDeviceConnections() error {
 
 // testSingleDeviceConnection 测试单个设备连接
 func testSingleDeviceConnection(ctx context.Context, device *model.Device) bool {
+	global.Logger.Debug("开始测试设备连接", zap.Uint64("deviceID", device.ID))
 	// 获取协议实例
 	reg := protocol.DefaultRegistry()
 	proto, ok := reg.Get(device.Protocol)
@@ -99,6 +100,7 @@ func testSingleDeviceConnection(ctx context.Context, device *model.Device) bool 
 		return false
 	}
 	connParams["deviceID"] = float64(device.ID)
+	global.Logger.Debug("设备连接参数", zap.Any("params", connParams))
 
 	// 尝试连接
 	handle, err := proto.Connect(ctx, connParams)
@@ -106,6 +108,7 @@ func testSingleDeviceConnection(ctx context.Context, device *model.Device) bool 
 		global.Logger.Debug("设备连接失败", zap.Uint64("deviceID", device.ID), zap.Error(err))
 		return false
 	}
+	global.Logger.Debug("设备连接测试成功", zap.Uint64("deviceID", device.ID))
 
 	// 立即关闭连接
 	defer func() {
@@ -129,8 +132,7 @@ func parseDeviceConfigToMetadata(device *model.Device) (protocol.Metadata, error
 	}
 
 	for k, v := range configMap {
-		// 跳过插件相关字段（已移除，此处保留兼容）
-		if k == "pluginHost" || k == "pluginPort" || k == "model" {
+		if k == "pluginHost" || k == "pluginPort" {
 			continue
 		}
 		result[k] = v
@@ -184,5 +186,6 @@ func GetSystemStatus() map[string]interface{} {
 		"uptime": GetUptime(),
 		"os":     runtime.GOOS,
 		"arch":   runtime.GOARCH,
+		"sn":     global.CONFIG.Gateway.SN,
 	}
 }

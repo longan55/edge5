@@ -12,7 +12,7 @@ package report
 
 import (
 	"edge5/global"
-	"edge5/internal/pkg/cache"
+	"edge5/internal/core/cache"
 
 	"go.uber.org/zap"
 )

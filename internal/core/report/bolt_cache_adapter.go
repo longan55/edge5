@@ -2,7 +2,7 @@ package report
 
 import (
 	"crypto/rand"
-	"edge5/internal/pkg/cache"
+	"edge5/internal/core/cache"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"

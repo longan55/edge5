@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"edge5/internal/pkg/protocol"
+	"edge5/internal/core/protocol"
 	"edge5/internal/utils/response"
 
 	"github.com/gin-gonic/gin"
@@ -47,7 +47,9 @@ type protocolOption struct {
 }
 
 type protocolOptionsGroup struct {
-	Options []protocolConnectionOption `json:"options"`
+	Options                  []protocolConnectionOption               `json:"options"`
+	ConnectionParamsScope    string                                   `json:"connectionParamsScope"`
+	ConnectionParamsByModel  map[string][]protocolConnectionOption    `json:"connectionParamsByModel"`
 }
 
 type protocolConnectionOption struct {
@@ -125,7 +127,39 @@ func buildOptions(protocols []protocol.Metadata) *optionsResponse {
 					}
 					opts = append(opts, opt)
 				}
-				resp.ProtocolOptions[name] = protocolOptionsGroup{Options: opts}
+
+				scope := protocol.GetConnectionParamsScope(p)
+				cpByModel := protocol.ExtractConnectionParamsByModel(p)
+				cpByModelResult := make(map[string][]protocolConnectionOption)
+				for modelName, params := range cpByModel {
+					modelOpts := make([]protocolConnectionOption, 0)
+					for _, param := range params {
+						opt := protocolConnectionOption{
+							Name:     param.Name,
+							CName:    param.CName,
+							Type:     param.Type,
+							Required: param.Required,
+						}
+						if param.Default != "" {
+							opt.Default = param.Default
+						}
+						if len(param.Choices) > 0 {
+							choices := make([]interface{}, len(param.Choices))
+							for i, c := range param.Choices {
+								choices[i] = c
+							}
+							opt.Choices = choices
+						}
+						modelOpts = append(modelOpts, opt)
+					}
+					cpByModelResult[modelName] = modelOpts
+				}
+
+				resp.ProtocolOptions[name] = protocolOptionsGroup{
+					Options:                 opts,
+					ConnectionParamsScope:   scope,
+					ConnectionParamsByModel: cpByModelResult,
+				}
 			}
 			dto.Brands = append(dto.Brands, bo)
 		}

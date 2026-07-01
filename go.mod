@@ -7,12 +7,16 @@ require (
 	github.com/eclipse/paho.mqtt.golang v1.5.0
 	github.com/gin-contrib/cors v1.5.0
 	github.com/gin-gonic/gin v1.9.1
+	github.com/goburrow/serial v0.1.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
 	github.com/longan55/go-mcprotocol v1.2.4
+	github.com/longan55/melsecfx v0.0.1
 	github.com/mojocn/base64Captcha v1.3.5
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/spf13/viper v1.18.2
+	github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
+	github.com/thinkgos/gomodbus/v2 v2.2.2
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.25.0
 	google.golang.org/grpc v1.60.1
@@ -73,7 +77,7 @@ require (
 	golang.org/x/image v0.0.0-20190501045829-6d32002ffd75 // indirect
 	golang.org/x/net v0.27.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
-	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231120223509-83a465c0220f // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect

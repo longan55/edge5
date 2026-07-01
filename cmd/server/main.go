@@ -5,12 +5,18 @@ import (
 	"edge5/config"
 	"edge5/global"
 	"edge5/internal/model"
-	"edge5/internal/pkg/cache"
-	"edge5/internal/pkg/connector"
-	"edge5/internal/pkg/protocol"
-	_ "edge5/internal/pkg/protocol/builtin"
-	_ "edge5/internal/pkg/protocol/builtin/mcprotocol"
-	_ "edge5/internal/pkg/protocol/builtin/mitcncprotocol"
+	"edge5/internal/core/cache"
+	"edge5/internal/core/connector"
+	"edge5/internal/core/protocol"
+	"edge5/internal/core/protocol/builtin"
+	_ "edge5/internal/core/protocol/builtin"
+	_ "edge5/internal/core/protocol/builtin/delta"
+	_ "edge5/internal/core/protocol/builtin/inovance"
+	_ "edge5/internal/core/protocol/builtin/mcprotocol"
+	_ "edge5/internal/core/protocol/builtin/melsecfx"
+	_ "edge5/internal/core/protocol/builtin/mitcncprotocol"
+	_ "edge5/internal/core/protocol/builtin/panasonic"
+	_ "edge5/internal/core/protocol/builtin/s7"
 	"edge5/internal/repository"
 	"edge5/internal/router"
 	"edge5/internal/service"
@@ -176,6 +182,7 @@ func initConnector() {
 }
 
 func initPlugin() error {
+	builtin.InitSerialManagerWithPorts(config.CONFIG.Serial.Ports)
 	return protocol.Init(global.DB, global.Logger)
 }
 

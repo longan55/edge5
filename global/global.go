@@ -3,8 +3,8 @@ package global
 
 import (
 	"edge5/config"
-	"edge5/internal/pkg/cache"
-	"edge5/internal/pkg/connector"
+	"edge5/internal/core/cache"
+	"edge5/internal/core/connector"
 	"sync"
 
 	"go.uber.org/zap"
