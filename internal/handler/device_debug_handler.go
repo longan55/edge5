@@ -250,7 +250,7 @@ func (h *DeviceDebugHandler) doRead(deviceID uint64, params []DebugReadParam) ([
 	readReq := protocol.BatchReadRequest{Points: points}
 	resp, err := proto.ReadBatch(ctx, handle, readReq)
 	if err != nil {
-		return nil, fmt.Errorf("读取失败: %w", err)
+		return nil, err
 	}
 
 	results := make([]map[string]interface{}, 0, len(resp.Results))

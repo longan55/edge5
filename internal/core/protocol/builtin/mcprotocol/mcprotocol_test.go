@@ -14,7 +14,6 @@ func TestConnect(t *testing.T) {
 	}
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 		t.Errorf("连接 MC 客户端失败: %v", err)
 	}
 	defer conn.Close()

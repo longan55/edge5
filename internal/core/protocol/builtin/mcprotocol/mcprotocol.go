@@ -196,11 +196,9 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (prot
 		}
 		conn, err := net.DialTCP("tcp", nil, tcpAddr)
 		if err != nil {
-			fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 			return protocol.InvalidHandle, fmt.Errorf("连接 MC 客户端失败: %w", err)
 		}
 		defer conn.Close()
-		fmt.Println("............................................")
 		m.connectionParams[deviceID] = params
 		m.connection = params
 		m.deviceID = deviceID
