@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"edge5/config"
 	"edge5/global"
+	"edge5/internal/core/protocol"
 	"edge5/internal/model"
 	"edge5/internal/repository"
 
@@ -582,12 +584,150 @@ func (s *MQTTBusinessService) replyGatewayCommand(requestID, command string, res
 
 func (s *MQTTBusinessService) handleDeviceCommand(_ mqtt.Client, msg mqtt.Message) {
 	s.logger.Info("收到设备指令", zap.String("topic", msg.Topic()), zap.String("payload", string(msg.Payload())))
-	// TODO: 解析 topic 中的 deviceSn，执行对应设备指令
+
+	var wrapper model.MQTTGatewayMessage
+	if err := json.Unmarshal(msg.Payload(), &wrapper); err != nil {
+		s.logger.Warn("解析设备指令消息体失败", zap.Error(err))
+		return
+	}
+
+	var cmdReq model.CommandPayload
+	if err := json.Unmarshal(wrapper.Payload, &cmdReq); err != nil {
+		s.logger.Warn("解析设备指令负载失败", zap.Error(err))
+		return
+	}
+
+	s.logger.Info("设备指令", zap.String("command", cmdReq.Command), zap.Any("params", cmdReq.Params), zap.String("deviceSn", wrapper.DeviceSn))
+
+	if cmdReq.Command == "write" {
+		s.handleDeviceWriteCommand(wrapper.RequestID, wrapper.DeviceSn, cmdReq.Params)
+		return
+	}
+
+	s.replyDeviceCommand(wrapper.RequestID, wrapper.DeviceSn, cmdReq.Command, 1, "未知指令")
+}
+
+func (s *MQTTBusinessService) handleDeviceWriteCommand(requestID, fallbackDeviceSn string, params map[string]interface{}) {
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		s.logger.Warn("序列化设备写指令参数失败", zap.Error(err))
+		s.replyDeviceCommand(requestID, fallbackDeviceSn, "write", 1, "参数解析失败")
+		return
+	}
+
+	var cmdParams model.DeviceCommandParams
+	if err := json.Unmarshal(paramsJSON, &cmdParams); err != nil {
+		s.logger.Warn("解析设备写指令参数失败", zap.Error(err))
+		s.replyDeviceCommand(requestID, fallbackDeviceSn, "write", 1, "参数解析失败: "+err.Error())
+		return
+	}
+
+	deviceSn := cmdParams.DeviceSn
+	if deviceSn == "" {
+		deviceSn = fallbackDeviceSn
+	}
+
+	if deviceSn == "" {
+		s.replyDeviceCommand(requestID, "", "write", 1, "设备序列号不能为空")
+		return
+	}
+
+	if len(cmdParams.Params.Items) == 0 {
+		s.replyDeviceCommand(requestID, deviceSn, "write", 1, "请至少添加一个写入项")
+		return
+	}
+
+	err = s.executeDeviceWrite(deviceSn, cmdParams.Params)
+	if err != nil {
+		s.logger.Error("设备写操作失败", zap.String("deviceSn", deviceSn), zap.Error(err))
+		s.replyDeviceCommand(requestID, deviceSn, "write", 1, "写入失败: "+err.Error())
+		return
+	}
+
+	s.replyDeviceCommand(requestID, deviceSn, "write", 0, "写入成功")
+}
+
+func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams model.DeviceWriteParams) error {
+	device, err := s.deviceRepo.GetBySn(deviceSn)
+	if err != nil {
+		return fmt.Errorf("设备不存在: %w", err)
+	}
+
+	if device.Status != 1 {
+		return fmt.Errorf("设备未启用")
+	}
+
+	reg := protocol.DefaultRegistry()
+	proto, ok := reg.Get(device.Protocol)
+	if !ok {
+		return fmt.Errorf("协议 %s 未注册", device.Protocol)
+	}
+
+	connParams, err := parseDeviceConfigToMetadata(device)
+	if err != nil {
+		return fmt.Errorf("解析设备配置失败: %w", err)
+	}
+	connParams["deviceID"] = float64(device.ID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	handle, err := proto.Connect(ctx, connParams)
+	if err != nil {
+		return fmt.Errorf("连接设备失败: %w", err)
+	}
+	defer func() {
+		_ = proto.Disconnect(context.Background(), handle)
+	}()
+
+	items := make([]protocol.BatchWriteItem, 0, len(writeParams.Items))
+	for _, item := range writeParams.Items {
+		count := item.Point.Count
+		if count <= 0 {
+			count = 1
+		}
+		pointName := item.Point.Name
+		if pointName == "" {
+			pointName = item.Point.Resource
+		}
+		items = append(items, protocol.BatchWriteItem{
+			Point: protocol.Point{
+				Name:     pointName,
+				Resource: item.Point.Resource,
+				DataType: item.Point.DataType,
+				Count:    count,
+			},
+			Value:    item.Value,
+			Priority: item.Priority,
+		})
+	}
+
+	writeReq := protocol.BatchWriteRequest{
+		Items:   items,
+		Options: writeParams.Options,
+	}
+
+	return proto.WriteBatch(ctx, handle, writeReq)
+}
+
+func (s *MQTTBusinessService) replyDeviceCommand(requestID, deviceSn, command string, result int, message string) {
+	topic := s.buildTopic("device_cmd_reply_up", deviceSn)
+	resp := model.CommandResponse{
+		GatewaySn: s.gatewaySN,
+		DeviceSn:  deviceSn,
+		Timestamp: time.Now().UnixMilli(),
+		RequestID: requestID,
+		Payload: model.ResponsePayload{
+			Command: command,
+			Result:  result,
+			Message: message,
+		},
+	}
+	s.publish(topic, resp)
 }
 
 func (s *MQTTBusinessService) handleDeviceCommandReply(_ mqtt.Client, msg mqtt.Message) {
 	s.logger.Info("收到设备指令响应", zap.String("topic", msg.Topic()), zap.String("payload", string(msg.Payload())))
-	// TODO: 处理设备指令响应
 }
 
 // ─── 设备数据上报（供外部调用） ───

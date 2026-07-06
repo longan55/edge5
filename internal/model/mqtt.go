@@ -158,6 +158,7 @@ type CommandPayload struct {
 
 type CommandResponse struct {
 	GatewaySn string          `json:"gatewaySn"`
+	DeviceSn  string          `json:"deviceSn,omitempty"`
 	Timestamp int64           `json:"timestamp"`
 	RequestID string          `json:"requestId"`
 	Payload   ResponsePayload `json:"payload"`
@@ -168,4 +169,27 @@ type ResponsePayload struct {
 	Result  int         `json:"result"`
 	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
+}
+
+// ─── 设备指令 ───
+
+type DeviceCommandParams struct {
+	DeviceSn string           `json:"deviceSn"`
+	Params   DeviceWriteParams `json:"params"`
+}
+
+type DeviceWriteParams struct {
+	Items   []DeviceWriteItem `json:"items"`
+	Options map[string]any    `json:"options,omitempty"`
+}
+
+type DeviceWriteItem struct {
+	Point struct {
+		Resource string `json:"resource"`
+		DataType string `json:"dataType"`
+		Name     string `json:"name,omitempty"`
+		Count    int    `json:"count,omitempty"`
+	} `json:"point"`
+	Value    interface{} `json:"value"`
+	Priority int         `json:"priority,omitempty"`
 }
