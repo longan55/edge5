@@ -143,7 +143,6 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (prot
 	if m.Clients == nil {
 		m.Clients = make(map[uint]mcp.Client)
 	}
-	fmt.Println("111")
 
 	deviceID := uint(builtin.GetInt(params, "deviceID"))
 	if deviceID == 0 {

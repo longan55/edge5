@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"regexp"
 	"time"
 
 	"edge5/config"
@@ -450,16 +450,11 @@ func (s *MQTTBusinessService) subscribeDownlinkTopics() {
 	topic4 := s.buildTopic("device_cmd_down", "+") // deviceSn 用 + 通配
 	s.subscribe(topic4, qos, s.handleDeviceCommand)
 
-	// 5. 设备指令响应（通配订阅所有设备）
-	topic5 := s.buildTopic("device_cmd_reply_up", "+") // deviceSn 用 + 通配
-	s.subscribe(topic5, qos, s.handleDeviceCommandReply)
-
 	s.logger.Info("下行主题订阅完成",
 		zap.String("register_ack", topic1),
 		zap.String("gateway_cmd", topic2),
 		zap.String("device_register_ack", topic3),
 		zap.String("device_cmd", topic4),
-		zap.String("device_cmd_reply", topic5),
 	)
 }
 
@@ -540,7 +535,7 @@ func (s *MQTTBusinessService) handleDeviceRegisterAckMessage(_ mqtt.Client, msg 
 }
 
 func (s *MQTTBusinessService) handleGatewayCommand(_ mqtt.Client, msg mqtt.Message) {
-	s.logger.Info("收到网关指令:"+strings.TrimSpace(string(msg.Payload())), zap.String("topic", msg.Topic()))
+	s.logger.Info("收到网关指令:"+regexp.MustCompile(`\s+`).ReplaceAllString(string(msg.Payload()), ""), zap.String("topic", msg.Topic()))
 
 	var wrapper model.MQTTGatewayMessage
 	if err := json.Unmarshal(msg.Payload(), &wrapper); err != nil {
@@ -726,10 +721,6 @@ func (s *MQTTBusinessService) replyDeviceCommand(requestID, deviceSn, command st
 		},
 	}
 	s.publish(topic, resp)
-}
-
-func (s *MQTTBusinessService) handleDeviceCommandReply(_ mqtt.Client, msg mqtt.Message) {
-	s.logger.Info("收到设备指令响应", zap.String("topic", msg.Topic()), zap.String("payload", string(msg.Payload())))
 }
 
 // ─── 设备数据上报（供外部调用） ───
