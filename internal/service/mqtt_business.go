@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"edge5/config"
@@ -127,7 +128,7 @@ func (s *MQTTBusinessService) publish(topic string, payload interface{}) error {
 		return err
 	}
 
-	s.logger.Debug("MQTT 发布消息", zap.String("topic", topic), zap.Int("len", len(data)))
+	// s.logger.Debug("MQTT 发布消息", zap.String("topic", topic), zap.Int("len", len(data)))
 	return nil
 }
 
@@ -539,7 +540,7 @@ func (s *MQTTBusinessService) handleDeviceRegisterAckMessage(_ mqtt.Client, msg 
 }
 
 func (s *MQTTBusinessService) handleGatewayCommand(_ mqtt.Client, msg mqtt.Message) {
-	s.logger.Info("收到网关指令", zap.String("topic", msg.Topic()), zap.String("payload", string(msg.Payload())))
+	s.logger.Info("收到网关指令:"+strings.TrimSpace(string(msg.Payload())), zap.String("topic", msg.Topic()))
 
 	var wrapper model.MQTTGatewayMessage
 	if err := json.Unmarshal(msg.Payload(), &wrapper); err != nil {
@@ -547,23 +548,28 @@ func (s *MQTTBusinessService) handleGatewayCommand(_ mqtt.Client, msg mqtt.Messa
 		return
 	}
 
-	var cmdReq model.CommandPayload
-	if err := json.Unmarshal(wrapper.Payload, &cmdReq); err != nil {
-		s.logger.Warn("解析网关指令负载失败", zap.Error(err))
-		return
+	var params map[string]interface{}
+	if len(wrapper.Payload) > 0 {
+		if err := json.Unmarshal(wrapper.Payload, &params); err != nil {
+			s.logger.Warn("解析网关指令负载失败", zap.Error(err))
+			return
+		}
 	}
 
-	s.logger.Info("网关指令", zap.String("command", cmdReq.Command), zap.Any("params", cmdReq.Params))
+	s.logger.Info("网关指令", zap.String("command", wrapper.Command), zap.Any("params", params), zap.String("deviceSn", wrapper.DeviceSn))
 
-	// 处理 init 注销指令
-	if cmdReq.Command == "init" {
-		s.replyGatewayCommand(wrapper.RequestID, cmdReq.Command, 0, "网关已注销")
+	if wrapper.Command == "init" {
+		s.replyGatewayCommand(wrapper.RequestID, wrapper.Command, 0, "网关已注销")
 		s.handleGatewayInit()
 		return
 	}
 
-	// TODO: 根据指令类型执行具体操作（重启、同步时间、修改上报间隔等）
-	s.replyGatewayCommand(wrapper.RequestID, cmdReq.Command, 0, "ok")
+	if wrapper.Command == "write" {
+		s.handleDeviceWriteCommand(wrapper.RequestID, wrapper.DeviceSn, params)
+		return
+	}
+
+	s.replyGatewayCommand(wrapper.RequestID, wrapper.Command, 0, "ok")
 }
 
 func (s *MQTTBusinessService) replyGatewayCommand(requestID, command string, result int, message string) {
@@ -615,29 +621,25 @@ func (s *MQTTBusinessService) handleDeviceWriteCommand(requestID, fallbackDevice
 		return
 	}
 
-	var cmdParams model.DeviceCommandParams
-	if err := json.Unmarshal(paramsJSON, &cmdParams); err != nil {
+	var writeParams model.DeviceWriteParams
+	if err := json.Unmarshal(paramsJSON, &writeParams); err != nil {
 		s.logger.Warn("解析设备写指令参数失败", zap.Error(err))
 		s.replyDeviceCommand(requestID, fallbackDeviceSn, "write", 1, "参数解析失败: "+err.Error())
 		return
 	}
 
-	deviceSn := cmdParams.DeviceSn
-	if deviceSn == "" {
-		deviceSn = fallbackDeviceSn
-	}
-
+	deviceSn := fallbackDeviceSn
 	if deviceSn == "" {
 		s.replyDeviceCommand(requestID, "", "write", 1, "设备序列号不能为空")
 		return
 	}
 
-	if len(cmdParams.Params.Items) == 0 {
+	if len(writeParams.Points) == 0 {
 		s.replyDeviceCommand(requestID, deviceSn, "write", 1, "请至少添加一个写入项")
 		return
 	}
 
-	err = s.executeDeviceWrite(deviceSn, cmdParams.Params)
+	err = s.executeDeviceWrite(deviceSn, writeParams)
 	if err != nil {
 		s.logger.Error("设备写操作失败", zap.String("deviceSn", deviceSn), zap.Error(err))
 		s.replyDeviceCommand(requestID, deviceSn, "write", 1, "写入失败: "+err.Error())
@@ -680,25 +682,25 @@ func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams mo
 		_ = proto.Disconnect(context.Background(), handle)
 	}()
 
-	items := make([]protocol.BatchWriteItem, 0, len(writeParams.Items))
-	for _, item := range writeParams.Items {
-		count := item.Point.Count
+	items := make([]protocol.BatchWriteItem, 0, len(writeParams.Points))
+	for _, point := range writeParams.Points {
+		count := point.Count
 		if count <= 0 {
 			count = 1
 		}
-		pointName := item.Point.Name
+		pointName := point.Name
 		if pointName == "" {
-			pointName = item.Point.Resource
+			pointName = point.Resource
 		}
 		items = append(items, protocol.BatchWriteItem{
 			Point: protocol.Point{
 				Name:     pointName,
-				Resource: item.Point.Resource,
-				DataType: item.Point.DataType,
+				Resource: point.Resource,
+				DataType: point.DataType,
 				Count:    count,
 			},
-			Value:    item.Value,
-			Priority: item.Priority,
+			Value:    point.Value,
+			Priority: point.Priority,
 		})
 	}
 

@@ -70,17 +70,16 @@ func InitLogger() error {
 		encoderConfig = zap.NewDevelopmentEncoderConfig()
 	}
 
-	// 设置时间格式
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	encoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
+	encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
 
-	// 创建Encoder
 	encoder := zapcore.NewConsoleEncoder(encoderConfig)
-	// 创建core
 	c1 := zapcore.NewCore(encoder, ws, levelConf)
 	c2 := zapcore.NewCore(encoder, zapcore.AddSync(writerErr), zap.ErrorLevel)
 	core := zapcore.NewTee(c1, c2)
 
-	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
+	logger := zap.New(core, zap.AddCaller())
 	Logger = logger
 
 	Logger.Info("日志记录器创建成功")

@@ -71,6 +71,7 @@ type MQTTGatewayMessage struct {
 	Model      string          `json:"model,omitempty"`
 	Timestamp  int64           `json:"timestamp"`
 	RequestID  string          `json:"requestId"`
+	Command    string          `json:"command"`
 	Payload    json.RawMessage `json:"payload"`
 }
 
@@ -179,17 +180,15 @@ type DeviceCommandParams struct {
 }
 
 type DeviceWriteParams struct {
-	Items   []DeviceWriteItem `json:"items"`
-	Options map[string]any    `json:"options,omitempty"`
+	Points  []DeviceWritePoint `json:"points"`
+	Options map[string]any     `json:"options,omitempty"`
 }
 
-type DeviceWriteItem struct {
-	Point struct {
-		Resource string `json:"resource"`
-		DataType string `json:"dataType"`
-		Name     string `json:"name,omitempty"`
-		Count    int    `json:"count,omitempty"`
-	} `json:"point"`
+type DeviceWritePoint struct {
+	Resource string      `json:"resource"`
+	DataType string      `json:"dataType"`
 	Value    interface{} `json:"value"`
+	Name     string      `json:"name,omitempty"`
+	Count    int         `json:"count,omitempty"`
 	Priority int         `json:"priority,omitempty"`
 }
