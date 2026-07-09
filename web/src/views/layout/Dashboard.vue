@@ -112,6 +112,8 @@
           <el-descriptions :column="2" border>
               <el-descriptions-item label="网关SN">{{ systemInfo.sn }}</el-descriptions-item>
               <el-descriptions-item label="程序版本">v1.0.0</el-descriptions-item>
+              <el-descriptions-item label="IP地址">{{ systemInfo.ip }}</el-descriptions-item>
+              <el-descriptions-item label="MAC地址">{{ systemInfo.mac }}</el-descriptions-item>
               <el-descriptions-item label="数据库类型">SQLite3</el-descriptions-item>
               <el-descriptions-item label="最后更新">-</el-descriptions-item>
             </el-descriptions>
@@ -152,7 +154,9 @@ const stats = ref({
 })
 
 const systemInfo = ref({
-  sn: 'GWD001'
+  sn: 'GWD001',
+  ip: '-',
+  mac: '-'
 })
 
 const mqttConnected = ref(false)
@@ -210,6 +214,8 @@ const fetchStats = async () => {
       }
 
       systemInfo.value.sn = systemRes.data?.sn || 'GWD001'
+      systemInfo.value.ip = systemRes.data?.ip || '-'
+      systemInfo.value.mac = systemRes.data?.mac || '-'
 
       const resData = systemRes.data?.resources || {}
       resources.value = {

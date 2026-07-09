@@ -128,9 +128,9 @@ func (mb *MessageBuilder) BuildTopic(key string, deviceSn string) string {
 
 	path := template.Path
 	path = strings.ReplaceAll(path, "{gatewaySn}", mb.gatewaySN)
-	if deviceSn != "" {
-		path = strings.ReplaceAll(path, "{deviceSn}", deviceSn)
-	}
+	// if deviceSn != "" {
+	// 	path = strings.ReplaceAll(path, "{deviceSn}", deviceSn)
+	// }
 
 	return prefix + "/" + direction + "/" + path
 }

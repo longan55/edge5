@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
+	"runtime"
+	"sync"
 	"time"
 
 	"edge5/config"
@@ -15,6 +18,12 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"go.uber.org/zap"
+)
+
+var (
+	networkIP   string
+	networkMAC  string
+	networkOnce sync.Once
 )
 
 // MQTTBusinessService 网关 MQTT 业务服务
@@ -177,6 +186,54 @@ func (s *MQTTBusinessService) registerStateMachine() {
 }
 
 // doRegister 发送网关注册消息，阻塞直到收到 ack 或上下文取消
+func getNetworkInfo() (ip, mac string) {
+	if runtime.GOOS == "linux" {
+		iface, err := net.InterfaceByName("eth0")
+		if err != nil {
+			return "", ""
+		}
+		mac = iface.HardwareAddr.String()
+		addrs, err := iface.Addrs()
+		if err != nil {
+			return ip, mac
+		}
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+				ip = ipNet.IP.String()
+				return ip, mac
+			}
+		}
+		return ip, mac
+	}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() && ipNet.IP.To4() != nil {
+				return ipNet.IP.String(), iface.HardwareAddr.String()
+			}
+		}
+	}
+	return "", ""
+}
+
+func getCachedNetworkInfo() (ip, mac string) {
+	networkOnce.Do(func() {
+		networkIP, networkMAC = getNetworkInfo()
+	})
+	return networkIP, networkMAC
+}
+
 func (s *MQTTBusinessService) doRegister() bool {
 	// 发送前再次检查注册状态，避免数据库状态已变更但全局变量尚未同步
 	if s.mqttRepo != nil {
@@ -191,12 +248,17 @@ func (s *MQTTBusinessService) doRegister() bool {
 	topic := s.buildTopic("register_up", "")
 	s.logger.Info("启动网关注册发送", zap.String("topic", topic))
 
+	ip, mac := getCachedNetworkInfo()
+	if ip == "" || mac == "" {
+		s.logger.Warn("获取网络信息失败，IP/MAC 将为空")
+	}
+
 	payload := model.GatewayRegisterPayload{
 		SN:              s.gatewaySN,
 		Model:           "edge5-gateway",
 		FirmwareVersion: "1.0.0",
-		IP:              "",
-		MAC:             "",
+		IP:              ip,
+		MAC:             mac,
 	}
 
 	msg := GetMessageBuilder().BuildGatewayMessage(payload)
@@ -422,6 +484,9 @@ func (s *MQTTBusinessService) collectGatewayProperties() *model.GatewayPropertie
 		payload.DiskUsage = resources.DiskUsedPercent
 	}
 
+	ip, _ := getCachedNetworkInfo()
+	payload.IP = ip
+
 	return payload
 }
 
@@ -543,15 +608,7 @@ func (s *MQTTBusinessService) handleGatewayCommand(_ mqtt.Client, msg mqtt.Messa
 		return
 	}
 
-	var params map[string]interface{}
-	if len(wrapper.Payload) > 0 {
-		if err := json.Unmarshal(wrapper.Payload, &params); err != nil {
-			s.logger.Warn("解析网关指令负载失败", zap.Error(err))
-			return
-		}
-	}
-
-	s.logger.Info("网关指令", zap.String("command", wrapper.Command), zap.Any("params", params), zap.String("deviceSn", wrapper.DeviceSn))
+	s.logger.Info("网关指令", zap.String("command", wrapper.Command), zap.String("deviceSn", wrapper.DeviceSn))
 
 	if wrapper.Command == "init" {
 		s.replyGatewayCommand(wrapper.RequestID, wrapper.Command, 0, "网关已注销")
@@ -560,7 +617,15 @@ func (s *MQTTBusinessService) handleGatewayCommand(_ mqtt.Client, msg mqtt.Messa
 	}
 
 	if wrapper.Command == "write" {
-		s.handleDeviceWriteCommand(wrapper.RequestID, wrapper.DeviceSn, params)
+		var writeParams model.DeviceWriteParams
+		if len(wrapper.Payload) > 0 {
+			if err := json.Unmarshal(wrapper.Payload, &writeParams); err != nil {
+				s.logger.Warn("解析设备写指令参数失败", zap.Error(err))
+				s.replyGatewayCommand(wrapper.RequestID, "write", 1, "参数解析失败")
+				return
+			}
+		}
+		s.handleDeviceWriteCommand(wrapper.RequestID, wrapper.DeviceSn, writeParams)
 		return
 	}
 
@@ -592,36 +657,26 @@ func (s *MQTTBusinessService) handleDeviceCommand(_ mqtt.Client, msg mqtt.Messag
 		return
 	}
 
-	var cmdReq model.CommandPayload
-	if err := json.Unmarshal(wrapper.Payload, &cmdReq); err != nil {
-		s.logger.Warn("解析设备指令负载失败", zap.Error(err))
+	s.logger.Info("设备指令", zap.String("command", wrapper.Command), zap.String("deviceSn", wrapper.DeviceSn))
+
+	if wrapper.Command == "write" {
+		var writeParams model.DeviceWriteParams
+		if err := json.Unmarshal(wrapper.Payload, &writeParams); err != nil {
+			s.logger.Warn("解析设备写指令参数失败", zap.Error(err))
+			s.replyDeviceCommand(wrapper.RequestID, wrapper.DeviceSn, "write", 1, "参数解析失败")
+			return
+		}
+		s.handleDeviceWriteCommand(wrapper.RequestID, wrapper.DeviceSn, writeParams)
+		return
+	} else if wrapper.Command == "read" {
+
 		return
 	}
 
-	s.logger.Info("设备指令", zap.String("command", cmdReq.Command), zap.Any("params", cmdReq.Params), zap.String("deviceSn", wrapper.DeviceSn))
-
-	if cmdReq.Command == "write" {
-		s.handleDeviceWriteCommand(wrapper.RequestID, wrapper.DeviceSn, cmdReq.Params)
-		return
-	}
-
-	s.replyDeviceCommand(wrapper.RequestID, wrapper.DeviceSn, cmdReq.Command, 1, "未知指令")
+	s.replyDeviceCommand(wrapper.RequestID, wrapper.DeviceSn, wrapper.Command, 1, "未知指令")
 }
 
-func (s *MQTTBusinessService) handleDeviceWriteCommand(requestID, fallbackDeviceSn string, params map[string]interface{}) {
-	paramsJSON, err := json.Marshal(params)
-	if err != nil {
-		s.logger.Warn("序列化设备写指令参数失败", zap.Error(err))
-		s.replyDeviceCommand(requestID, fallbackDeviceSn, "write", 1, "参数解析失败")
-		return
-	}
-
-	var writeParams model.DeviceWriteParams
-	if err := json.Unmarshal(paramsJSON, &writeParams); err != nil {
-		s.logger.Warn("解析设备写指令参数失败", zap.Error(err))
-		s.replyDeviceCommand(requestID, fallbackDeviceSn, "write", 1, "参数解析失败: "+err.Error())
-		return
-	}
+func (s *MQTTBusinessService) handleDeviceWriteCommand(requestID, fallbackDeviceSn string, writeParams model.DeviceWriteParams) {
 
 	deviceSn := fallbackDeviceSn
 	if deviceSn == "" {
@@ -634,35 +689,35 @@ func (s *MQTTBusinessService) handleDeviceWriteCommand(requestID, fallbackDevice
 		return
 	}
 
-	err = s.executeDeviceWrite(deviceSn, writeParams)
+	reply, err := s.executeDeviceWrite(deviceSn, writeParams)
 	if err != nil {
 		s.logger.Error("设备写操作失败", zap.String("deviceSn", deviceSn), zap.Error(err))
 		s.replyDeviceCommand(requestID, deviceSn, "write", 1, "写入失败: "+err.Error())
 		return
 	}
 
-	s.replyDeviceCommand(requestID, deviceSn, "write", 0, "写入成功")
+	s.replyDeviceWriteCommand(requestID, deviceSn, reply)
 }
 
-func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams model.DeviceWriteParams) error {
+func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams model.DeviceWriteParams) (*model.DeviceWriteReply, error) {
 	device, err := s.deviceRepo.GetBySn(deviceSn)
 	if err != nil {
-		return fmt.Errorf("设备不存在: %w", err)
+		return nil, fmt.Errorf("设备不存在: %w", err)
 	}
 
 	if device.Status != 1 {
-		return fmt.Errorf("设备未启用")
+		return nil, fmt.Errorf("设备未启用")
 	}
 
 	reg := protocol.DefaultRegistry()
 	proto, ok := reg.Get(device.Protocol)
 	if !ok {
-		return fmt.Errorf("协议 %s 未注册", device.Protocol)
+		return nil, fmt.Errorf("协议 %s 未注册", device.Protocol)
 	}
 
 	connParams, err := parseDeviceConfigToMetadata(device)
 	if err != nil {
-		return fmt.Errorf("解析设备配置失败: %w", err)
+		return nil, fmt.Errorf("解析设备配置失败: %w", err)
 	}
 	connParams["deviceID"] = float64(device.ID)
 
@@ -671,13 +726,26 @@ func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams mo
 
 	handle, err := proto.Connect(ctx, connParams)
 	if err != nil {
-		return fmt.Errorf("连接设备失败: %w", err)
+		details := make([]model.DeviceWriteDetail, 0, len(writeParams.Points))
+		for _, point := range writeParams.Points {
+			details = append(details, model.DeviceWriteDetail{
+				Resource: point.Resource,
+				Value:    nil,
+				Error:    "连接失败: " + err.Error(),
+			})
+		}
+		return &model.DeviceWriteReply{
+			Code:    3,
+			Message: "全部失败(未连接原因)",
+			Details: details,
+		}, nil
 	}
 	defer func() {
 		_ = proto.Disconnect(context.Background(), handle)
 	}()
 
 	items := make([]protocol.BatchWriteItem, 0, len(writeParams.Points))
+	points := make([]protocol.Point, 0, len(writeParams.Points))
 	for _, point := range writeParams.Points {
 		count := point.Count
 		if count <= 0 {
@@ -697,6 +765,12 @@ func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams mo
 			Value:    point.Value,
 			Priority: point.Priority,
 		})
+		points = append(points, protocol.Point{
+			Name:     pointName,
+			Resource: point.Resource,
+			DataType: point.DataType,
+			Count:    count,
+		})
 	}
 
 	writeReq := protocol.BatchWriteRequest{
@@ -704,7 +778,78 @@ func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams mo
 		Options: writeParams.Options,
 	}
 
-	return proto.WriteBatch(ctx, handle, writeReq)
+	if err := proto.WriteBatch(ctx, handle, writeReq); err != nil {
+		details := make([]model.DeviceWriteDetail, 0, len(writeParams.Points))
+		for _, point := range writeParams.Points {
+			details = append(details, model.DeviceWriteDetail{
+				Resource: point.Resource,
+				Value:    nil,
+				Error:    "写入失败: " + err.Error(),
+			})
+		}
+		return &model.DeviceWriteReply{
+			Code:    2,
+			Message: "全部失败(参数原因)",
+			Details: details,
+		}, nil
+	}
+
+	readReq := protocol.BatchReadRequest{
+		Points:  points,
+		Options: writeParams.Options,
+	}
+
+	readResp, err := proto.ReadBatch(ctx, handle, readReq)
+	if err != nil {
+		details := make([]model.DeviceWriteDetail, 0, len(writeParams.Points))
+		for _, point := range writeParams.Points {
+			details = append(details, model.DeviceWriteDetail{
+				Resource: point.Resource,
+				Value:    nil,
+				Error:    "读取失败: " + err.Error(),
+			})
+		}
+		return &model.DeviceWriteReply{
+			Code:    2,
+			Message: "全部失败(参数原因)",
+			Details: details,
+		}, nil
+	}
+
+	details := make([]model.DeviceWriteDetail, 0, len(readResp.Results))
+	successCount := 0
+	for _, result := range readResp.Results {
+		var errMsg string
+		if result.Error != nil {
+			errMsg = result.Error.Error()
+		} else {
+			successCount++
+		}
+		details = append(details, model.DeviceWriteDetail{
+			Resource: result.PointName,
+			Value:    result.Value,
+			Error:    errMsg,
+		})
+	}
+
+	var code int
+	var message string
+	if successCount == len(details) {
+		code = 0
+		message = "ok"
+	} else if successCount > 0 {
+		code = 1
+		message = "部分成功"
+	} else {
+		code = 2
+		message = "全部失败(参数原因)"
+	}
+
+	return &model.DeviceWriteReply{
+		Code:    code,
+		Message: message,
+		Details: details,
+	}, nil
 }
 
 func (s *MQTTBusinessService) replyDeviceCommand(requestID, deviceSn, command string, result int, message string) {
@@ -720,6 +865,24 @@ func (s *MQTTBusinessService) replyDeviceCommand(requestID, deviceSn, command st
 			Message: message,
 		},
 	}
+	s.publish(topic, resp)
+}
+
+func (s *MQTTBusinessService) replyDeviceWriteCommand(requestID, deviceSn string, reply *model.DeviceWriteReply) {
+	topic := s.buildTopic("device_cmd_reply_up", deviceSn)
+	resp := model.CommandResponse{
+		GatewaySn: s.gatewaySN,
+		DeviceSn:  deviceSn,
+		Timestamp: time.Now().UnixMilli(),
+		RequestID: requestID,
+		Payload: model.ResponsePayload{
+			Command: "read",
+			Result:  reply.Code,
+			Message: reply.Message,
+			Data:    reply,
+		},
+	}
+	s.logger.Debug("响应写入命令", zap.String("topic", topic), zap.Any("resp", resp))
 	s.publish(topic, resp)
 }
 

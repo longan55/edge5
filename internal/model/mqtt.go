@@ -122,6 +122,7 @@ type GatewayPropertiesPayload struct {
 	DiskUsage   float64 `json:"diskUsage"`
 	Uptime      int64   `json:"uptime"`
 	Temperature float64 `json:"temperature,omitempty"`
+	IP          string  `json:"ip,omitempty"`
 }
 
 // ─── 设备注册 ───
@@ -144,18 +145,7 @@ type DeviceRegisterAckPayload struct {
 
 // ─── 指令下发/响应 ───
 
-type MQTTCommandRequest struct {
-	GatewaySn  string         `json:"gatewaySn"`
-	Timestamp  int64          `json:"timestamp"`
-	RequestID  string         `json:"requestId"`
-	DeviceType string         `json:"deviceType,omitempty"`
-	Payload    CommandPayload `json:"payload"`
-}
 
-type CommandPayload struct {
-	Command string                 `json:"command"`
-	Params  map[string]interface{} `json:"params,omitempty"`
-}
 
 type CommandResponse struct {
 	GatewaySn string          `json:"gatewaySn"`
@@ -191,4 +181,16 @@ type DeviceWritePoint struct {
 	Name     string      `json:"name,omitempty"`
 	Count    int         `json:"count,omitempty"`
 	Priority int         `json:"priority,omitempty"`
+}
+
+type DeviceWriteDetail struct {
+	Resource string      `json:"resource"`
+	Value    interface{} `json:"value"`
+	Error    string      `json:"error"`
+}
+
+type DeviceWriteReply struct {
+	Code    int                  `json:"code"`
+	Message string               `json:"message"`
+	Details []DeviceWriteDetail  `json:"details"`
 }
