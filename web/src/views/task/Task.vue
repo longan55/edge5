@@ -108,7 +108,11 @@
           <div class="params-section">
             <div class="params-header">
               <span class="params-title">参数列表</span>
-              <el-button type="primary" size="small" @click="addCommand">添加参数</el-button>
+              <div>
+                <el-button type="primary" size="small" @click="addCommand">添加参数</el-button>
+                <el-button type="info" size="small" @click="handleExportPoints">导出点位</el-button>
+                <el-button type="info" size="small" @click="handleImportPoints">导入点位</el-button>
+              </div>
             </div>
             <el-alert v-if="!formData.deviceId" title="请先选择关联设备" type="info" show-icon :closable="false" style="margin-bottom: 10px;" />
             <el-alert v-else-if="!readParamsSchema.length" :title="'该协议未定义采集参数类型，使用默认参数'" type="warning" show-icon :closable="false" style="margin-bottom: 10px;" />
@@ -120,7 +124,7 @@
                 </template>
               </el-table-column>
               <!-- 动态渲染 schema 中定义的字段 -->
-              <el-table-column v-for="field in readParamsSchema" :key="field.name" :label="field.cName || field.name" :width="field.type === 'int' ? 130 : 140">
+              <el-table-column v-for="field in readParamsColumns" :key="field.name" :label="field.cName || field.name" :width="field.type === 'int' ? 130 : 140">
                 <template #default="{ row, $index }">
                   <!-- string 类型 -->
                   <el-input v-if="field.type === 'string'" v-model="row[field.name]" :placeholder="field.cName || field.name" size="small" />
@@ -144,6 +148,7 @@
               暂无采集参数，点击"添加参数"按钮添加
             </div>
           </div>
+          <input ref="importFileInput" type="file" accept=".json" style="display: none" @change="handleFileChange" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -184,7 +189,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createTask,
@@ -198,6 +203,7 @@ import {
   getReadParamsSchema,
   getTaskData
 } from '@/api/task'
+import { exportPoints, importPoints, validateAndMapPoints } from '@/utils/pointIO'
 
 // 搜索
 const searchInfo = ref({ name: '' })
@@ -212,6 +218,24 @@ const deviceList = ref([])
 
 // 采集参数的字段 schema（动态从后端获取）
 const readParamsSchema = ref([])
+
+const readParamsColumns = computed(() => {
+  const schema = readParamsSchema.value || []
+  if (schema.length === 0) {
+    return [
+      { name: 'address', cName: '地址', type: 'string' },
+      { name: 'offset', cName: '偏移', type: 'int' },
+      { name: 'parseType', cName: '类型', type: 'select', choices: ['bool', 'short', 'ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'string'] }
+    ]
+  }
+  return schema.map(param => ({
+    name: param.name || param.fieldName || '',
+    cName: param.cName || param.name || '',
+    type: param.type || 'string',
+    choices: param.choices,
+    default: param.default
+  }))
+})
 
 const onSubmit = () => {
   page.value = 1
@@ -278,6 +302,7 @@ const dialogVisible = ref(false)
 const dialogType = ref('create')
 const btnLoading = ref(false)
 const formRef = ref(null)
+const importFileInput = ref(null)
 const formData = ref({
   id: 0,
   name: '',
@@ -364,14 +389,69 @@ const loadReadParamsSchema = async (deviceId) => {
 const addCommand = () => {
   const cmd = { name: '' }
   // 用 schema 填充默认值
-  for (const field of readParamsSchema.value) {
-    cmd[field.name] = field.default ?? (field.type === 'int' ? 0 : '')
+  for (const field of readParamsColumns.value) {
+    if (field.default !== undefined) {
+      cmd[field.name] = field.default
+    } else if (field.type === 'int') {
+      cmd[field.name] = 0
+    } else if (field.type === 'select' && field.choices && field.choices.length > 0) {
+      cmd[field.name] = field.choices[0]
+    } else {
+      cmd[field.name] = ''
+    }
   }
   formData.value.commands.push(cmd)
 }
 
 const removeCommand = (index) => {
   formData.value.commands.splice(index, 1)
+}
+
+const handleExportPoints = () => {
+  if (!formData.value.commands.length) {
+    ElMessage.warning('暂无点位数据')
+    return
+  }
+  const success = exportPoints(formData.value.commands, readParamsSchema.value, 'task_points.json')
+  if (success) {
+    ElMessage.success('导出成功')
+  }
+}
+
+const handleImportPoints = () => {
+  importFileInput.value?.click()
+}
+
+const handleFileChange = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  try {
+    const importedData = await importPoints(file)
+    
+    const { points, warnings } = validateAndMapPoints(importedData, readParamsColumns.value)
+    
+    const action = formData.value.commands.length > 0 ? 'append' : 'replace'
+    
+    if (action === 'append') {
+      formData.value.commands = [...formData.value.commands, ...points]
+    } else {
+      formData.value.commands = points
+    }
+    
+    ElMessage.success(`成功导入 ${points.length} 个点位`)
+    
+    if (warnings.length > 0) {
+      ElMessageBox.alert(warnings.join('\n'), '导入提示', {
+        type: 'warning',
+        confirmButtonText: '知道了'
+      })
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '导入失败')
+  }
+  
+  event.target.value = ''
 }
 
 const closeDialog = () => {
@@ -580,6 +660,7 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 15px;
+  gap: 8px;
 }
 
 .params-title {

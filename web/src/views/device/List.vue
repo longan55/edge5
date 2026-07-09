@@ -263,7 +263,12 @@
               最新读取: {{ lastReadTime }}
             </span>
             <el-button type="warning" @click="handleDebugWrite">写入</el-button>
+            <div style="margin-left: auto; display: flex; gap: 8px;">
+              <el-button type="info" @click="handleExportPoints">导出点位</el-button>
+              <el-button type="info" @click="handleImportPoints">导入点位</el-button>
+            </div>
           </div>
+          <input ref="importFileInput" type="file" accept=".json" style="display: none" @change="handleFileChange" />
 
           <div class="params-table-wrapper">
             <el-table :data="debugParams" border class="params-table" style="width: 100%">
@@ -330,6 +335,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import request from '@/utils/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
+import { exportPoints, importPoints, validateAndMapPoints } from '@/utils/pointIO'
 
 const loading = ref(false)
 const deviceList = ref([])
@@ -868,6 +874,7 @@ const isLoopReading = ref(false)
 const loopInterval = ref(1000)
 const lastReadTime = ref('')
 const paramTypes = ['int', 'float', 'string', 'bool']
+const importFileInput = ref(null)
 let loopTimer = null
 
 const handleDebug = async (row) => {
@@ -1037,6 +1044,53 @@ const stopLoop = () => {
 const stopLoopReading = () => {
   isLoopReading.value = false
   stopLoop()
+}
+
+const handleExportPoints = () => {
+  if (!debugParams.value.length) {
+    ElMessage.warning('暂无点位数据')
+    return
+  }
+  const success = exportPoints(debugParams.value, debugSchemaColumns.value, 'debug_points.json')
+  if (success) {
+    ElMessage.success('导出成功')
+  }
+}
+
+const handleImportPoints = () => {
+  importFileInput.value?.click()
+}
+
+const handleFileChange = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  try {
+    const importedData = await importPoints(file)
+    
+    const { points, warnings } = validateAndMapPoints(importedData, debugSchemaColumns.value)
+    
+    const action = debugParams.value.length > 0 ? 'append' : 'replace'
+    
+    if (action === 'append') {
+      debugParams.value = [...debugParams.value, ...points]
+    } else {
+      debugParams.value = points
+    }
+    
+    ElMessage.success(`成功导入 ${points.length} 个点位`)
+    
+    if (warnings.length > 0) {
+      ElMessageBox.alert(warnings.join('\n'), '导入提示', {
+        type: 'warning',
+        confirmButtonText: '知道了'
+      })
+    }
+  } catch (e) {
+    ElMessage.error(e.message || '导入失败')
+  }
+  
+  event.target.value = ''
 }
 
 onMounted(() => {
