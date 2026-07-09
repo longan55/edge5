@@ -186,11 +186,24 @@ type DeviceWritePoint struct {
 type DeviceWriteDetail struct {
 	Resource string      `json:"resource"`
 	Value    interface{} `json:"value"`
-	Error    string      `json:"error"`
+	Error    string      `json:"error,omitempty"`
 }
 
 type DeviceWriteReply struct {
 	Code    int                  `json:"code"`
 	Message string               `json:"message"`
 	Details []DeviceWriteDetail  `json:"details"`
+}
+
+type DeviceReadDetail struct {
+	Resource string      `json:"resource"`
+	DataType string      `json:"dataType"`
+	Value    interface{} `json:"value"`
+	Error    string      `json:"error,omitempty"`
+}
+
+type DeviceReadReply struct {
+	Code    int                 `json:"code"`
+	Message string              `json:"message"`
+	Details []DeviceReadDetail  `json:"details"`
 }

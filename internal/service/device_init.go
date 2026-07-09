@@ -160,13 +160,38 @@ func StartAllTasks() {
 	}
 }
 
-// GetUptime 获取系统运行时间
+// GetUptime 获取系统运行时间（字符串格式）
 func GetUptime() string {
 	if runtime.GOOS == "linux" {
 		return getLinuxUptime()
 	}
 	// Windows 系统返回默认值
 	return "up 0 days, 8 hours, 1 minute"
+}
+
+// GetUptimeSeconds 获取系统运行时间（秒数）
+// Windows 无法获取时返回固定值 29400（8小时10分）
+func GetUptimeSeconds() int64 {
+	if runtime.GOOS == "linux" {
+		return getLinuxUptimeSeconds()
+	}
+	return 29400
+}
+
+func getLinuxUptimeSeconds() int64 {
+	cmd := exec.Command("cat", "/proc/uptime")
+	output, err := cmd.Output()
+	if err != nil {
+		global.Logger.Warn("读取 /proc/uptime 失败", zap.Error(err))
+		return 29400
+	}
+	var uptimeSeconds float64
+	_, err = fmt.Sscanf(string(output), "%f", &uptimeSeconds)
+	if err != nil {
+		global.Logger.Warn("解析 /proc/uptime 失败", zap.Error(err))
+		return 29400
+	}
+	return int64(uptimeSeconds)
 }
 
 // getLinuxUptime 执行 uptime -p 获取运行时间

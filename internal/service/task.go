@@ -9,9 +9,9 @@ import (
 	"unsafe"
 
 	"edge5/global"
-	"edge5/internal/model"
 	"edge5/internal/core/cache"
 	"edge5/internal/core/protocol"
+	"edge5/internal/model"
 	"edge5/internal/repository"
 
 	"go.uber.org/zap"
@@ -477,7 +477,6 @@ func (s *TaskScheduler) reportData(task *model.Task, device *model.Device, data 
 		s.cacheData(task.ID, record)
 		return err
 	}
-	s.logger.Debug("MQTT发布成功", zap.Uint64("taskID", task.ID), zap.String("topic", topic))
 
 	record.UpState = true
 	s.cacheData(task.ID, record)
