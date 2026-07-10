@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math"
 	"net"
 	"strconv"
@@ -20,35 +19,24 @@ import (
 )
 
 func init() {
-	// 注册内置协议 MelsecMC
 	if err := builtin.Register(NewMcService()); err != nil {
 		panic(fmt.Sprintf("注册 MelsecMC 协议失败: %v", err))
 	}
 }
 
-// ---------------------------------------------------------------------------
-// McService 基于三菱 MC 协议（3E 帧）的 Q 系列 PLC 通信实现
-// ---------------------------------------------------------------------------
-
 type McService struct {
 	lock             sync.Mutex
-	Clients          map[uint]mcp.Client
 	connected        bool
 	deviceID         uint
-	connection       protocol.Metadata
-	keepAlive        map[uint]bool
 	connectionParams map[uint]protocol.Metadata
 }
 
 func NewMcService() *McService {
 	return &McService{
-		Clients:          make(map[uint]mcp.Client),
-		keepAlive:        make(map[uint]bool),
 		connectionParams: make(map[uint]protocol.Metadata),
 	}
 }
 
-// Info 返回协议元信息
 func (m *McService) Info() protocol.Metadata {
 	return protocol.Metadata{
 		"name":          "MC-3E",
@@ -66,7 +54,6 @@ func (m *McService) Info() protocol.Metadata {
 		"connectionParams": []any{
 			protocol.Metadata{"name": "ip", "cName": "IP 地址", "type": "string", "required": true, "default": ""},
 			protocol.Metadata{"name": "port", "cName": "端口", "type": "int", "required": true, "default": "6000"},
-			protocol.Metadata{"name": "keepAlive", "cName": "连接模式", "type": "select", "required": false, "default": "true", "choices": []string{"true", "false"}},
 			protocol.Metadata{"name": "networkNumber", "cName": "网络编号", "type": "string", "required": false, "default": "00"},
 			protocol.Metadata{"name": "pcNum", "cName": "PC 编号", "type": "string", "required": false, "default": "FF"},
 			protocol.Metadata{"name": "unitIONum", "cName": "单元 I/O 编号", "type": "string", "required": false, "default": "FF03"},
@@ -80,12 +67,10 @@ func (m *McService) Info() protocol.Metadata {
 	}
 }
 
-// IsSupportServer 返回是否支持服务端模式
 func (m *McService) IsSupportServer() bool {
 	return true
 }
 
-// IsConnected 返回指定句柄的设备是否已连接
 func (m *McService) IsConnected(handle protocol.DeviceHandle) bool {
 	m.lock.Lock()
 	defer m.lock.Unlock()
@@ -93,116 +78,37 @@ func (m *McService) IsConnected(handle protocol.DeviceHandle) bool {
 	if devID == 0 {
 		devID = m.deviceID
 	}
-	client, ok := m.Clients[devID]
-	if !ok || client == nil {
+	params, ok := m.connectionParams[devID]
+	if !ok {
 		return false
 	}
-	keepAlive, _ := m.keepAlive[devID]
-	if !keepAlive {
-		params, ok := m.connectionParams[devID]
-		if !ok {
-			return false
-		}
-		ip := builtin.GetString(params, "ip")
-		port := builtin.GetInt(params, "port")
-		if port <= 0 {
-			port = 6000
-		}
-		if ip == "" {
-			return false
-		}
-		station := mcp.NewStation("00", "FF", "FF03", "00")
-		testClient, err := mcp.New3EAliveClient(ip, port, station)
-		if err != nil {
-			return false
-		}
-		if err = testClient.Connect(); err != nil {
-			return false
-		}
-		testClient.Close()
-		return true
-	}
-	if err := client.HealthCheck(); err != nil {
+	ip := builtin.GetString(params, "ip")
+	if ip == "" {
 		return false
 	}
+	port := builtin.GetInt(params, "port")
+	if port <= 0 {
+		port = 6000
+	}
+	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
+	if err != nil {
+		return false
+	}
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
+	if err != nil {
+		return false
+	}
+	conn.Close()
 	return true
 }
 
-// Connect 根据 Metadata 中的连接参数连接到 PLC，返回设备句柄
-// 参数:
-//   - ip: string
-//   - port: int (默认 6000)
-//   - networkNumber: int (默认 0)
-//   - pcNum: int (默认 0xFF)
-//   - unitIONum: int (默认 0x03FF)
-//   - unitStationNum: int (默认 0x00)
 func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (protocol.DeviceHandle, error) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	if m.Clients == nil {
-		m.Clients = make(map[uint]mcp.Client)
-	}
-
 	deviceID := uint(builtin.GetInt(params, "deviceID"))
 	if deviceID == 0 {
 		return protocol.InvalidHandle, fmt.Errorf("缺少 deviceID 参数")
-	}
-
-	if client, ok := m.Clients[deviceID]; ok {
-		if err := client.HealthCheck(); err != nil {
-			if closer, ok := interface{}(client).(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-			delete(m.Clients, deviceID)
-			return protocol.InvalidHandle, fmt.Errorf("设备连接已断开: %w", err)
-		}
-		m.connected = true
-		m.deviceID = deviceID
-		m.connection = params
-		return protocol.DeviceHandle(deviceID), nil
-	}
-
-	keepAliveVal := params["keepAlive"]
-	keepAlive := true
-	if ka, ok := keepAliveVal.(bool); ok {
-		keepAlive = ka
-	} else if kaStr, ok := keepAliveVal.(string); ok {
-		keepAlive = kaStr == "true" || kaStr == "长连接"
-	}
-	m.keepAlive[deviceID] = keepAlive
-
-	if !keepAlive {
-		if builtin.Logger != nil {
-			builtin.Logger.Info("MC协议: 使用短连接模式",
-				zap.Uint("deviceID", deviceID),
-				zap.String("ip", builtin.GetString(params, "ip")),
-			)
-		}
-
-		ip := builtin.GetString(params, "ip")
-		port := builtin.GetInt(params, "port")
-		if port <= 0 {
-			port = 6000
-		}
-
-		if ip == "" {
-			return protocol.InvalidHandle, fmt.Errorf("缺少 IP 地址参数")
-		}
-		tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
-		if err != nil {
-			return protocol.InvalidHandle, err
-		}
-		conn, err := net.DialTCP("tcp", nil, tcpAddr)
-		if err != nil {
-			return protocol.InvalidHandle, fmt.Errorf("连接 MC 客户端失败: %w", err)
-		}
-		defer conn.Close()
-		m.connectionParams[deviceID] = params
-		m.connection = params
-		m.deviceID = deviceID
-		m.connected = true
-		return protocol.DeviceHandle(deviceID), nil
 	}
 
 	ip := builtin.GetString(params, "ip")
@@ -210,44 +116,27 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (prot
 	if port <= 0 {
 		port = 6000
 	}
-	networkNumber := builtin.GetString(params, "networkNumber")
-	pcNum := builtin.GetString(params, "pcNum")
-	unitIONum := builtin.GetString(params, "unitIONum")
-	unitStationNum := builtin.GetString(params, "unitStationNum")
-
-	if networkNumber == "" {
-		networkNumber = "00"
-	}
-	if pcNum == "" {
-		pcNum = "FF"
-	}
-	if unitIONum == "" {
-		unitIONum = "FF03"
-	}
-	if unitStationNum == "" {
-		unitStationNum = "00"
-	}
 
 	if ip == "" {
 		return protocol.InvalidHandle, fmt.Errorf("缺少 IP 地址参数")
 	}
 
-	station := mcp.NewStation(networkNumber, pcNum, unitIONum, unitStationNum)
-	client, err := mcp.New3EAliveClient(ip, port, station)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
 	if err != nil {
-		return protocol.InvalidHandle, fmt.Errorf("创建 MC 客户端失败: %w", err)
+		return protocol.InvalidHandle, err
 	}
-	if err = client.Connect(); err != nil {
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
+	if err != nil {
 		return protocol.InvalidHandle, fmt.Errorf("连接 MC 客户端失败: %w", err)
 	}
+	conn.Close()
 
-	m.Clients[deviceID] = client
-	m.connected = true
+	m.connectionParams[deviceID] = params
 	m.deviceID = deviceID
-	m.connection = params
+	m.connected = true
 
 	if builtin.Logger != nil {
-		builtin.Logger.Info("设备连接成功",
+		builtin.Logger.Info("MC协议: 连接测试成功",
 			zap.Uint("deviceID", deviceID),
 			zap.String("ip", ip),
 			zap.Int("port", port),
@@ -256,80 +145,23 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (prot
 	return protocol.DeviceHandle(deviceID), nil
 }
 
-// Disconnect 断开指定句柄的设备连接
 func (m *McService) Disconnect(ctx context.Context, handle protocol.DeviceHandle) error {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	devID := uint(handle)
-	if devID == 0 {
-		devID = m.deviceID
-	}
-
-	if client, ok := m.Clients[devID]; ok {
-		if err := client.Close(); err != nil {
-			return fmt.Errorf("关闭 MC 客户端失败: %w", err)
-		}
-		delete(m.Clients, devID)
-	}
-	delete(m.keepAlive, devID)
-	if devID == m.deviceID {
-		m.connected = false
-		m.deviceID = 0
-		m.connection = nil
-	}
 	return nil
 }
 
-// ReadBatch 批量读取 PLC 寄存器数据
 func (m *McService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle, req protocol.BatchReadRequest) (*protocol.BatchReadResponse, error) {
 	m.lock.Lock()
 	devID := uint(handle)
 	if devID == 0 {
 		devID = m.deviceID
 	}
-	keepAlive, _ := m.keepAlive[devID]
-	var client mcp.Client
-	var ok bool
-	if keepAlive {
-		client, ok = m.Clients[devID]
-	}
-	params := m.connection
+	params := m.connectionParams[devID]
 	m.lock.Unlock()
 
-	if !keepAlive {
-		return m.readWithShortConnection(ctx, devID, params, req)
+	if params == nil {
+		return nil, fmt.Errorf("设备未连接")
 	}
 
-	if !ok {
-		return nil, fmt.Errorf("句柄 %d 未连接", handle)
-	}
-
-	results := make([]protocol.BatchReadResult, 0, len(req.Points))
-
-	for _, pt := range req.Points {
-		result := m.readPoint(client, pt)
-		results = append(results, result)
-	}
-
-	return &protocol.BatchReadResponse{
-		Results: results,
-	}, nil
-}
-
-func (m *McService) readWithShortConnection(ctx context.Context, devID uint, params protocol.Metadata, req protocol.BatchReadRequest) (*protocol.BatchReadResponse, error) {
-	fmt.Println("a ...any:")
-	fmt.Println("devID:", devID)
-	fmt.Println("params:", params)
-	fmt.Println("req:", req)
-	if builtin.Logger != nil {
-		builtin.Logger.Info("MC协议: 短连接读取数据",
-			zap.Uint("deviceID", devID),
-			zap.String("ip", builtin.GetString(params, "ip")),
-			zap.Int("port", builtin.GetInt(params, "port")),
-			zap.Any("params", params),
-		)
-	}
 	ip := builtin.GetString(params, "ip")
 	port := builtin.GetInt(params, "port")
 	if port <= 0 {
@@ -358,32 +190,14 @@ func (m *McService) readWithShortConnection(ctx context.Context, devID uint, par
 	}
 
 	station := mcp.NewStation(networkNumber, pcNum, unitIONum, unitStationNum)
-	client, err := mcp.New3EAliveClient(ip, port, station)
+	client, err := mcp.New3EClient(ip, port, station)
 	if err != nil {
 		return nil, fmt.Errorf("创建 MC 客户端失败: %w", err)
 	}
 	if err = client.Connect(); err != nil {
 		return nil, fmt.Errorf("连接 MC 客户端失败: %w", err)
 	}
-
-	if builtin.Logger != nil {
-		builtin.Logger.Info("MC协议: 短连接已建立",
-			zap.Uint("deviceID", devID),
-			zap.String("ip", ip),
-			zap.Int("port", port),
-		)
-	}
-
-	defer func() {
-		client.Close()
-		if builtin.Logger != nil {
-			builtin.Logger.Info("MC协议: 短连接已断开",
-				zap.Uint("deviceID", devID),
-				zap.String("ip", ip),
-				zap.Int("port", port),
-			)
-		}
-	}()
+	defer client.Close()
 
 	results := make([]protocol.BatchReadResult, 0, len(req.Points))
 	for _, pt := range req.Points {
@@ -445,39 +259,19 @@ func (m *McService) readPoint(client mcp.Client, pt protocol.Point) protocol.Bat
 	}
 }
 
-// WriteBatch 批量写入 PLC 寄存器数据
 func (m *McService) WriteBatch(ctx context.Context, handle protocol.DeviceHandle, req protocol.BatchWriteRequest) error {
 	m.lock.Lock()
 	devID := uint(handle)
 	if devID == 0 {
 		devID = m.deviceID
 	}
-	keepAlive, _ := m.keepAlive[devID]
-	var client mcp.Client
-	var ok bool
-	if keepAlive {
-		client, ok = m.Clients[devID]
-	}
-	params := m.connection
+	params := m.connectionParams[devID]
 	m.lock.Unlock()
 
-	if !keepAlive {
-		return m.writeWithShortConnection(ctx, devID, params, req)
+	if params == nil {
+		return fmt.Errorf("设备未连接")
 	}
 
-	if !ok {
-		return fmt.Errorf("句柄 %d 未连接", handle)
-	}
-
-	for _, item := range req.Items {
-		if err := m.writePoint(client, item); err != nil {
-			return fmt.Errorf("写入点位 %s 失败: %w", item.Point.Name, err)
-		}
-	}
-	return nil
-}
-
-func (m *McService) writeWithShortConnection(ctx context.Context, devID uint, params protocol.Metadata, req protocol.BatchWriteRequest) error {
 	ip := builtin.GetString(params, "ip")
 	port := builtin.GetInt(params, "port")
 	if port <= 0 {
@@ -506,32 +300,14 @@ func (m *McService) writeWithShortConnection(ctx context.Context, devID uint, pa
 	}
 
 	station := mcp.NewStation(networkNumber, pcNum, unitIONum, unitStationNum)
-	client, err := mcp.New3EAliveClient(ip, port, station)
+	client, err := mcp.New3EClient(ip, port, station)
 	if err != nil {
 		return fmt.Errorf("创建 MC 客户端失败: %w", err)
 	}
 	if err = client.Connect(); err != nil {
 		return fmt.Errorf("连接 MC 客户端失败: %w", err)
 	}
-
-	if builtin.Logger != nil {
-		builtin.Logger.Info("MC协议: 短连接已建立(写入)",
-			zap.Uint("deviceID", devID),
-			zap.String("ip", ip),
-			zap.Int("port", port),
-		)
-	}
-
-	defer func() {
-		client.Close()
-		if builtin.Logger != nil {
-			builtin.Logger.Info("MC协议: 短连接已断开(写入)",
-				zap.Uint("deviceID", devID),
-				zap.String("ip", ip),
-				zap.Int("port", port),
-			)
-		}
-	}()
+	defer client.Close()
 
 	for _, item := range req.Items {
 		if err := m.writePoint(client, item); err != nil {
@@ -576,23 +352,15 @@ func (m *McService) writePoint(client mcp.Client, item protocol.BatchWriteItem) 
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ReadMelsec 核心读取方法
-// ---------------------------------------------------------------------------
-
-// ReadMelsec 读取 PLC 寄存器数据
-// address: 设备地址，例如 "D10" → deviceName="D", offset=10
-// numPoints: 读取的点数（字数），前端统一用 length 表示 numPoints
 func ReadMelsec(client mcp.Client, address string, numPoints int) (string, []byte, error) {
 	deviceName, offset, err := ParseAddress(address)
 	if err != nil {
 		return "", nil, fmt.Errorf("地址解析失败: %v", err)
 	}
 
-	log.Printf("ReadMelsec - Device: %s, Offset: %d, NumPoints: %d", deviceName, offset, numPoints)
+	// log.Printf("ReadMelsec - Device: %s, Offset: %d, NumPoints: %d", deviceName, offset, numPoints)
 	read, err := client.Read(deviceName, offset, int64(numPoints))
 	if err != nil {
-		log.Printf("ReadMelsec ERROR: %v", err)
 		return "", nil, fmt.Errorf("读取失败: %w", err)
 	}
 	registerBinary, err := mcp.NewParser().Do(read)
@@ -602,14 +370,6 @@ func ReadMelsec(client mcp.Client, address string, numPoints int) (string, []byt
 	return address, registerBinary.Payload, nil
 }
 
-// ---------------------------------------------------------------------------
-// WriteMelsec 核心写入方法
-// ---------------------------------------------------------------------------
-
-// WriteMelsec 写入 PLC 寄存器数据
-// address: 设备地址，例如 "D10" → deviceName="D", offset=10
-// numPoints: 写入的点数（字数），前端统一用 length 表示 numPoints
-// value: 要写入的字节数据
 func WriteMelsec(client mcp.Client, address string, numPoints int, value []byte) ([]byte, error) {
 	deviceName, offset, err := ParseAddress(address)
 	if err != nil {
@@ -621,10 +381,6 @@ func WriteMelsec(client mcp.Client, address string, numPoints int, value []byte)
 	}
 	return resp, nil
 }
-
-// ---------------------------------------------------------------------------
-// 辅助读取方法（返回 interface{} 适配新接口）
-// ---------------------------------------------------------------------------
 
 func (m *McService) readBoolValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
@@ -788,13 +544,8 @@ func (m *McService) readStringValue(client mcp.Client, address string, length in
 	if err != nil {
 		return nil, err
 	}
-	// 去除尾部零字节
 	return strings.TrimRight(string(rawData), "\x00"), nil
 }
-
-// ---------------------------------------------------------------------------
-// 辅助写入方法（适配新接口）
-// ---------------------------------------------------------------------------
 
 func (m *McService) writeBoolValue(client mcp.Client, address string, length int, value interface{}) error {
 	var boolVal []byte
@@ -938,12 +689,7 @@ func (m *McService) writeStringValue(client mcp.Client, address string, length i
 	return err
 }
 
-// ---------------------------------------------------------------------------
-// 地址解析工具
-// ---------------------------------------------------------------------------
-
 func ParseAddress(address string) (deviceName string, offset int64, err error) {
-	// 将 address 由前面的若干字母紧接着数字组成，将字母部分赋值给 deviceName，将数字部分赋值给 offset
 	digitIdx := strings.IndexFunc(address, func(r rune) bool { return r >= '0' && r <= '9' })
 	if digitIdx < 0 {
 		return "", 0, fmt.Errorf("地址格式无效（缺少数字部分）: %s", address)
@@ -955,10 +701,6 @@ func ParseAddress(address string) (deviceName string, offset int64, err error) {
 	}
 	return deviceName, offset, nil
 }
-
-// ---------------------------------------------------------------------------
-// 数据类型转换工具
-// ---------------------------------------------------------------------------
 
 func ParseBoolValue(value string) ([]byte, error) {
 	value = strings.TrimSpace(value)
@@ -1034,7 +776,7 @@ func Bin2Int(b []byte, orders ...binary.ByteOrder) int {
 		order = orders[0]
 	}
 	if len(b) == 3 {
-		b = append([]byte{0}, b...) // 3字节特殊处理，扩展为4字节
+		b = append([]byte{0}, b...)
 	}
 	bytesBuffer := bytes.NewBuffer(b)
 	switch len(b) {
@@ -1067,7 +809,6 @@ func Bin2Int(b []byte, orders ...binary.ByteOrder) int {
 		}
 		return int(tmp)
 	default:
-		// 对于不支持的字节长度，尝试作为有符号整数处理
 		signed := len(b) > 0 && b[0]&0x80 != 0
 		if signed {
 			complement := make([]byte, len(b))
@@ -1102,14 +843,7 @@ func Bin2Int(b []byte, orders ...binary.ByteOrder) int {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// 保留旧版 ReadBatch / WriteBatch 方法签名以兼容外部调用（内部委托给新方法）
-// ---------------------------------------------------------------------------
-
-// ReadParams 兼容旧版 ParamRequest 调用
-// TODO: 后续迁移完成后删除
 func (m *McService) ReadParams(ctx context.Context, params protocol.Metadata) (protocol.Metadata, error) {
-	// 将 Metadata 转为 BatchReadRequest
 	pointsRaw := getInfoSlice(params, "points")
 	points := make([]protocol.Point, 0, len(pointsRaw))
 	for _, p := range pointsRaw {
@@ -1150,7 +884,6 @@ func getInfoSlice(m protocol.Metadata, key string) []any {
 	return v
 }
 
-// toString 将任意类型的值转换为字符串
 func toString(v any) string {
 	if v == nil {
 		return ""
