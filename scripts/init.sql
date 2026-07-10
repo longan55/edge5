@@ -224,7 +224,7 @@ VALUES (
         '设备指令',
         '/aixot',
         'down',
-        '{gatewaySn}/{deviceSn}/command',
+        '{gatewaySn}/command',
         TRUE,
         10
     ),
@@ -233,7 +233,7 @@ VALUES (
         '设备指令响应',
         '/aixot',
         'up',
-        '{gatewaySn}/{deviceSn}/command/reply',
+        '{gatewaySn}/command/reply',
         TRUE,
         11
     );

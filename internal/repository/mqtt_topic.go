@@ -115,7 +115,7 @@ func GetDefaultTopics() []*model.MQTTTopicTemplate {
 		{Key: "device_register_up", DisplayName: "设备注册", Direction: "up", Path: "{gatewaySn}/device/register", IsDefault: true, Sort: 7},
 		{Key: "device_register_down_ack", DisplayName: "设备注册响应", Direction: "down", Path: "{gatewaySn}/device/register/ack", IsDefault: true, Sort: 8},
 		{Key: "device_data_up", DisplayName: "设备数据上报", Direction: "up", Path: "{gatewaySn}/{deviceSn}/data", IsDefault: true, Sort: 9},
-		{Key: "device_cmd_down", DisplayName: "设备指令", Direction: "down", Path: "{gatewaySn}/{deviceSn}/command", IsDefault: true, Sort: 10},
-		{Key: "device_cmd_reply_up", DisplayName: "设备指令响应", Direction: "up", Path: "{gatewaySn}/{deviceSn}/command/reply", IsDefault: true, Sort: 11},
+		{Key: "device_cmd_down", DisplayName: "设备指令", Direction: "down", Path: "{gatewaySn}/command", IsDefault: true, Sort: 10},
+		{Key: "device_cmd_reply_up", DisplayName: "设备指令响应", Direction: "up", Path: "{gatewaySn}/command/reply", IsDefault: true, Sort: 11},
 	}
 }
