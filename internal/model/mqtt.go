@@ -149,17 +149,22 @@ type DeviceRegisterAckPayload struct {
 
 type CommandResponse struct {
 	GatewaySn string          `json:"gatewaySn"`
-	DeviceSn  string          `json:"deviceSn,omitempty"`
 	Timestamp int64           `json:"timestamp"`
 	RequestID string          `json:"requestId"`
+	Command   string          `json:"command"`
 	Payload   ResponsePayload `json:"payload"`
 }
 
 type ResponsePayload struct {
-	Command string      `json:"command"`
-	Result  int         `json:"result"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
+	Code    int              `json:"code"`
+	Message string           `json:"message"`
+	Details []ResponseDetail `json:"details,omitempty"`
+}
+
+type ResponseDetail struct {
+	Resource string      `json:"resource"`
+	Value    interface{} `json:"value,omitempty"`
+	Error    string      `json:"error,omitempty"`
 }
 
 // ─── 设备指令 ───

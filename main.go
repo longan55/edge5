@@ -37,7 +37,7 @@ func main() {
 }
 
 func run() error {
-	config.InitConfig("config/config.yaml")
+	config.InitConfig("")
 
 	global.InitLogger()
 	global.Logger.Info("Edge5 网关框架启动中...")
@@ -79,19 +79,14 @@ func run() error {
 		})
 	}
 
-	// 初始化消息构建器（统一的 MQTTGatewayMessage 格式，独立于上报协议）
 	service.NewMessageBuilder(global.Logger)
 
-	// 启动 MQTT 业务服务（网关注册、心跳、状态上报、订阅下行主题）
 	startMQTTBusiness()
 
-	// 异步测试设备连接并更新在线状态
 	service.TestDeviceConnections()
 
-	// 初始化路由（会初始化任务调度器）
 	r := router.SetupRouter(config.CONFIG.Server.Mode)
 
-	// 启动所有任务（路由初始化后，任务调度器已就绪）
 	service.StartAllTasks()
 
 	srv := &http.Server{
@@ -171,10 +166,7 @@ func initDefaultTopics() {
 func initCache() error {
 	var err error
 	global.CacheDB, err = cache.NewBoltCache()
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func initConnector() {
@@ -220,7 +212,7 @@ func initMQTT() error {
 				KeepAlive:           config.CONFIG.MQTT.KeepAlive,
 				QoS:                 int8(config.CONFIG.MQTT.QoS),
 				On:                  true,
-				Registered:          false, // 首次创建时注册状态为未注册
+				Registered:          false,
 				GatewaySN:           config.CONFIG.Gateway.SN,
 				SSL:                 config.CONFIG.MQTT.SSL,
 				SSLVerify:           config.CONFIG.MQTT.SSLVerify,
@@ -357,7 +349,6 @@ func waitForSignal() {
 }
 
 func startMQTTBusiness() {
-	// 从数据库加载之前的注册状态
 	mqttRepo := repository.NewMQTTConfigRepository(global.DB)
 	cfg, err := mqttRepo.Get()
 	if err != nil {
@@ -376,7 +367,6 @@ func startMQTTBusiness() {
 	systemMonitor := service.NewSystemMonitor(global.Logger)
 	mqttBusiness := service.NewMQTTBusinessService(deviceRepo, deviceStatusRepo, mqttRepo, systemMonitor, global.Logger)
 
-	// 保存到全局变量（用于热更新）
 	global.MQTTBusinessService = mqttBusiness
 
 	go mqttBusiness.Start()

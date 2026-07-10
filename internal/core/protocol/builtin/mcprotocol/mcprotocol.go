@@ -318,6 +318,18 @@ func (m *McService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle,
 }
 
 func (m *McService) readWithShortConnection(ctx context.Context, devID uint, params protocol.Metadata, req protocol.BatchReadRequest) (*protocol.BatchReadResponse, error) {
+	fmt.Println("a ...any:")
+	fmt.Println("devID:", devID)
+	fmt.Println("params:", params)
+	fmt.Println("req:", req)
+	if builtin.Logger != nil {
+		builtin.Logger.Info("MC协议: 短连接读取数据",
+			zap.Uint("deviceID", devID),
+			zap.String("ip", builtin.GetString(params, "ip")),
+			zap.Int("port", builtin.GetInt(params, "port")),
+			zap.Any("params", params),
+		)
+	}
 	ip := builtin.GetString(params, "ip")
 	port := builtin.GetInt(params, "port")
 	if port <= 0 {

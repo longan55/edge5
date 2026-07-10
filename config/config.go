@@ -3,6 +3,7 @@ package config
 
 import (
 	"log"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/viper"
@@ -32,9 +33,11 @@ func InitConfig(configPath string) *Config {
 	if CONFIG != nil {
 		return CONFIG
 	}
+
 	if configPath == "" {
-		configPath = "config/config.yaml"
+		configPath = findConfigFile()
 	}
+
 	viper.SetConfigFile(configPath)
 	viper.SetConfigType("yaml")
 
@@ -52,6 +55,30 @@ func InitConfig(configPath string) *Config {
 	CONFIG.Log.Path, _ = filepath.Abs(CONFIG.Log.Path)
 	log.Printf("配置文件: %+v\n", CONFIG)
 	return CONFIG
+}
+
+func findConfigFile() string {
+	candidates := []string{
+		"config/config.yaml",
+		"./config.yaml",
+	}
+
+	exePath, err := os.Executable()
+	if err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append([]string{
+			filepath.Join(exeDir, "config", "config.yaml"),
+			filepath.Join(exeDir, "config.yaml"),
+		}, candidates...)
+	}
+
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	return "config/config.yaml"
 }
 
 func setDefaultSerialPorts() {

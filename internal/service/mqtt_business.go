@@ -137,7 +137,7 @@ func (s *MQTTBusinessService) publish(topic string, payload interface{}) error {
 		return err
 	}
 
-	// s.logger.Debug("MQTT 发布消息", zap.String("topic", topic), zap.Int("len", len(data)))
+	s.logger.Debug("MQTT 发布消息："+string(data), zap.String("topic", topic))
 	return nil
 }
 
@@ -633,15 +633,14 @@ func (s *MQTTBusinessService) handleGatewayCommand(_ mqtt.Client, msg mqtt.Messa
 }
 
 func (s *MQTTBusinessService) replyGatewayCommand(requestID, command string, result int, message string) {
-	// 使用模板构建主题
 	topic := s.buildTopic("cmd_reply_up", "")
 	resp := model.CommandResponse{
 		GatewaySn: s.gatewaySN,
 		Timestamp: time.Now().UnixMilli(),
 		RequestID: requestID,
+		Command:   command,
 		Payload: model.ResponsePayload{
-			Command: command,
-			Result:  result,
+			Code:    result,
 			Message: message,
 		},
 	}
@@ -1030,12 +1029,11 @@ func (s *MQTTBusinessService) replyDeviceCommand(requestID, deviceSn, command st
 	topic := s.buildTopic("device_cmd_reply_up", deviceSn)
 	resp := model.CommandResponse{
 		GatewaySn: s.gatewaySN,
-		DeviceSn:  deviceSn,
 		Timestamp: time.Now().UnixMilli(),
 		RequestID: requestID,
+		Command:   command,
 		Payload: model.ResponsePayload{
-			Command: command,
-			Result:  result,
+			Code:    result,
 			Message: message,
 		},
 	}
@@ -1044,16 +1042,23 @@ func (s *MQTTBusinessService) replyDeviceCommand(requestID, deviceSn, command st
 
 func (s *MQTTBusinessService) replyDeviceWriteCommand(requestID, deviceSn string, reply *model.DeviceWriteReply) {
 	topic := s.buildTopic("device_cmd_reply_up", deviceSn)
+	details := make([]model.ResponseDetail, len(reply.Details))
+	for i, d := range reply.Details {
+		details[i] = model.ResponseDetail{
+			Resource: d.Resource,
+			Value:    d.Value,
+			Error:    d.Error,
+		}
+	}
 	resp := model.CommandResponse{
 		GatewaySn: s.gatewaySN,
-		DeviceSn:  deviceSn,
 		Timestamp: time.Now().UnixMilli(),
 		RequestID: requestID,
+		Command:   "write",
 		Payload: model.ResponsePayload{
-			Command: "write",
-			Result:  reply.Code,
+			Code:    reply.Code,
 			Message: reply.Message,
-			Data:    reply,
+			Details: details,
 		},
 	}
 	s.logger.Debug("响应写入命令", zap.String("topic", topic), zap.Any("resp", resp))
@@ -1062,14 +1067,24 @@ func (s *MQTTBusinessService) replyDeviceWriteCommand(requestID, deviceSn string
 
 func (s *MQTTBusinessService) replyDeviceReadCommand(requestID, deviceSn string, reply *model.DeviceReadReply) {
 	topic := s.buildTopic("device_cmd_reply_up", deviceSn)
-	payloadJSON, _ := json.Marshal(reply)
-	resp := model.MQTTGatewayMessage{
+	details := make([]model.ResponseDetail, len(reply.Details))
+	for i, d := range reply.Details {
+		details[i] = model.ResponseDetail{
+			Resource: d.Resource,
+			Value:    d.Value,
+			Error:    d.Error,
+		}
+	}
+	resp := model.CommandResponse{
 		GatewaySn: s.gatewaySN,
-		DeviceSn:  deviceSn,
 		Timestamp: time.Now().UnixMilli(),
 		RequestID: requestID,
 		Command:   "read",
-		Payload:   payloadJSON,
+		Payload: model.ResponsePayload{
+			Code:    reply.Code,
+			Message: reply.Message,
+			Details: details,
+		},
 	}
 	s.logger.Debug("响应读取命令", zap.String("topic", topic), zap.Any("resp", resp))
 	s.publish(topic, resp)
