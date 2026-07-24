@@ -327,7 +327,7 @@ func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *mo
 			if result.Quality == "good" || result.Quality == "" {
 				dataMap[cmd.Name] = result.Value
 			} else {
-				s.logger.Warn("数据质量异常", zap.Uint64("taskID", taskID), zap.String("point", result.PointName), zap.String("quality", result.Quality))
+				s.logger.Warn("数据质量异常", zap.Uint64("taskID", taskID), zap.String("point", result.PointName), zap.String("quality", result.Quality), zap.Error(result.Error))
 			}
 		}
 	}

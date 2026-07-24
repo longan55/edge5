@@ -12,6 +12,7 @@ import (
 	_ "edge5/internal/core/protocol/builtin"
 	_ "edge5/internal/core/protocol/builtin/delta"
 	_ "edge5/internal/core/protocol/builtin/inovance"
+	_ "edge5/internal/core/protocol/builtin/a1eprotocol"
 	_ "edge5/internal/core/protocol/builtin/mcprotocol"
 	_ "edge5/internal/core/protocol/builtin/melsecfx"
 	_ "edge5/internal/core/protocol/builtin/mitcncprotocol"
