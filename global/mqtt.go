@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -49,9 +50,9 @@ func (my *myMqttClient) Connect() error {
 
 	opts.AddBroker(broker)
 
-	clientID := CONFIG.MQTT.ClientID
+	clientID := CONFIG.MQTT.ClientID + "_" + strconv.Itoa(time.Now().Nanosecond())
 	if clientID == "" {
-		clientID = CONFIG.Gateway.SN + "-edge5"
+		clientID = CONFIG.Gateway.SN + "_" + strconv.Itoa(time.Now().Nanosecond())
 	}
 	opts.SetClientID(clientID)
 

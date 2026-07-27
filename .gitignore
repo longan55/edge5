@@ -43,7 +43,7 @@ logs/
 *.sqlite3
 
 # Build
-backend/cmd/server/server
+build
 frontend/dist/
 
 # Temporary
