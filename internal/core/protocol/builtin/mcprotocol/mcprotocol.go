@@ -201,7 +201,7 @@ func (m *McService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle,
 
 	results := make([]protocol.BatchReadResult, 0, len(req.Points))
 	for _, pt := range req.Points {
-		result := m.readPoint(client, pt)
+		result := readPoint(client, pt)
 		results = append(results, result)
 	}
 
@@ -210,7 +210,7 @@ func (m *McService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle,
 	}, nil
 }
 
-func (m *McService) readPoint(client mcp.Client, pt protocol.Point) protocol.BatchReadResult {
+func readPoint(client mcp.Client, pt protocol.Point) protocol.BatchReadResult {
 	count := pt.Count
 	if count <= 0 {
 		count = 1
@@ -221,27 +221,27 @@ func (m *McService) readPoint(client mcp.Client, pt protocol.Point) protocol.Bat
 
 	switch pt.DataType {
 	case "bool":
-		value, err = m.readBoolValue(client, pt.Resource, count)
+		value, err = readBoolValue(client, pt.Resource, count)
 	case "byte":
-		value, err = m.readByteValue(client, pt.Resource, count)
+		value, err = readByteValue(client, pt.Resource, count)
 	case "int16", "short":
-		value, err = m.readShortValue(client, pt.Resource, count)
+		value, err = readShortValue(client, pt.Resource, count)
 	case "uint16", "ushort":
-		value, err = m.readUShortValue(client, pt.Resource, count)
+		value, err = readUShortValue(client, pt.Resource, count)
 	case "int32", "int":
-		value, err = m.readIntValue(client, pt.Resource, count)
+		value, err = readIntValue(client, pt.Resource, count)
 	case "uint32", "uint":
-		value, err = m.readUIntValue(client, pt.Resource, count)
+		value, err = readUIntValue(client, pt.Resource, count)
 	case "int64", "long":
-		value, err = m.readLongValue(client, pt.Resource, count)
+		value, err = readLongValue(client, pt.Resource, count)
 	case "uint64", "ulong":
-		value, err = m.readULongValue(client, pt.Resource, count)
+		value, err = readULongValue(client, pt.Resource, count)
 	case "float32", "float":
-		value, err = m.readFloatValue(client, pt.Resource, count)
+		value, err = readFloatValue(client, pt.Resource, count)
 	case "float64", "double":
-		value, err = m.readDoubleValue(client, pt.Resource, count)
+		value, err = readDoubleValue(client, pt.Resource, count)
 	case "string":
-		value, err = m.readStringValue(client, pt.Resource, count)
+		value, err = readStringValue(client, pt.Resource, count)
 	default:
 		err = fmt.Errorf("不支持的数据类型: %s", pt.DataType)
 	}
@@ -310,14 +310,14 @@ func (m *McService) WriteBatch(ctx context.Context, handle protocol.DeviceHandle
 	defer client.Close()
 
 	for _, item := range req.Items {
-		if err := m.writePoint(client, item); err != nil {
+		if err := writePoint(client, item); err != nil {
 			return fmt.Errorf("写入点位 %s 失败: %w", item.Point.Name, err)
 		}
 	}
 	return nil
 }
 
-func (m *McService) writePoint(client mcp.Client, item protocol.BatchWriteItem) error {
+func writePoint(client mcp.Client, item protocol.BatchWriteItem) error {
 	pt := item.Point
 	count := pt.Count
 	if count <= 0 {
@@ -326,27 +326,27 @@ func (m *McService) writePoint(client mcp.Client, item protocol.BatchWriteItem) 
 
 	switch pt.DataType {
 	case "bool":
-		return m.writeBoolValue(client, pt.Resource, pt.Count, item.Value)
+		return writeBoolValue(client, pt.Resource, pt.Count, item.Value)
 	case "byte":
-		return m.writeIntValue(client, pt.Resource, 1, item.Value)
+		return writeIntValue(client, pt.Resource, 1, item.Value)
 	case "int16", "short":
-		return m.writeIntValue(client, pt.Resource, 2, item.Value)
+		return writeIntValue(client, pt.Resource, 2, item.Value)
 	case "uint16", "ushort":
-		return m.writeIntValue(client, pt.Resource, 2, item.Value)
+		return writeIntValue(client, pt.Resource, 2, item.Value)
 	case "int32", "int":
-		return m.writeIntValue(client, pt.Resource, 4, item.Value)
+		return writeIntValue(client, pt.Resource, 4, item.Value)
 	case "uint32", "uint":
-		return m.writeIntValue(client, pt.Resource, 4, item.Value)
+		return writeIntValue(client, pt.Resource, 4, item.Value)
 	case "int64", "long":
-		return m.writeIntValue(client, pt.Resource, 8, item.Value)
+		return writeIntValue(client, pt.Resource, 8, item.Value)
 	case "uint64", "ulong":
-		return m.writeIntValue(client, pt.Resource, 8, item.Value)
+		return writeIntValue(client, pt.Resource, 8, item.Value)
 	case "float32", "float":
-		return m.writeFloatValue(client, pt.Resource, count, item.Value)
+		return writeFloatValue(client, pt.Resource, count, item.Value)
 	case "float64", "double":
-		return m.writeDoubleValue(client, pt.Resource, count, item.Value)
+		return writeDoubleValue(client, pt.Resource, count, item.Value)
 	case "string":
-		return m.writeStringValue(client, pt.Resource, count, item.Value)
+		return writeStringValue(client, pt.Resource, count, item.Value)
 	default:
 		return fmt.Errorf("不支持的数据类型: %s", pt.DataType)
 	}
@@ -382,7 +382,7 @@ func WriteMelsec(client mcp.Client, address string, numPoints int, value []byte)
 	return resp, nil
 }
 
-func (m *McService) readBoolValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readBoolValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -398,7 +398,7 @@ func (m *McService) readBoolValue(client mcp.Client, address string, length int)
 	return bools, nil
 }
 
-func (m *McService) readByteValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readByteValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -409,7 +409,7 @@ func (m *McService) readByteValue(client mcp.Client, address string, length int)
 	return rawData, nil
 }
 
-func (m *McService) readShortValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readShortValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -425,7 +425,7 @@ func (m *McService) readShortValue(client mcp.Client, address string, length int
 	return vals, nil
 }
 
-func (m *McService) readUShortValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readUShortValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -441,7 +441,7 @@ func (m *McService) readUShortValue(client mcp.Client, address string, length in
 	return vals, nil
 }
 
-func (m *McService) readIntValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readIntValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -457,7 +457,7 @@ func (m *McService) readIntValue(client mcp.Client, address string, length int) 
 	return vals, nil
 }
 
-func (m *McService) readUIntValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readUIntValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -473,7 +473,7 @@ func (m *McService) readUIntValue(client mcp.Client, address string, length int)
 	return vals, nil
 }
 
-func (m *McService) readLongValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readLongValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -489,7 +489,7 @@ func (m *McService) readLongValue(client mcp.Client, address string, length int)
 	return vals, nil
 }
 
-func (m *McService) readULongValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readULongValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -505,7 +505,7 @@ func (m *McService) readULongValue(client mcp.Client, address string, length int
 	return vals, nil
 }
 
-func (m *McService) readFloatValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readFloatValue(client mcp.Client, address string, length int) (interface{}, error) {
 	length *= 2
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
@@ -522,7 +522,7 @@ func (m *McService) readFloatValue(client mcp.Client, address string, length int
 	return vals, nil
 }
 
-func (m *McService) readDoubleValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readDoubleValue(client mcp.Client, address string, length int) (interface{}, error) {
 	length *= 4
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
@@ -539,7 +539,7 @@ func (m *McService) readDoubleValue(client mcp.Client, address string, length in
 	return vals, nil
 }
 
-func (m *McService) readStringValue(client mcp.Client, address string, length int) (interface{}, error) {
+func readStringValue(client mcp.Client, address string, length int) (interface{}, error) {
 	_, rawData, err := ReadMelsec(client, address, length)
 	if err != nil {
 		return nil, err
@@ -547,7 +547,7 @@ func (m *McService) readStringValue(client mcp.Client, address string, length in
 	return strings.TrimRight(string(rawData), "\x00"), nil
 }
 
-func (m *McService) writeBoolValue(client mcp.Client, address string, length int, value interface{}) error {
+func writeBoolValue(client mcp.Client, address string, length int, value interface{}) error {
 	var boolVal []byte
 	switch v := value.(type) {
 	case bool:
@@ -579,7 +579,7 @@ func (m *McService) writeBoolValue(client mcp.Client, address string, length int
 	return err
 }
 
-func (m *McService) writeIntValue(client mcp.Client, address string, byteLen int, value interface{}) error {
+func writeIntValue(client mcp.Client, address string, byteLen int, value interface{}) error {
 	var intVal int64
 	switch v := value.(type) {
 	case float64:
@@ -616,7 +616,7 @@ func (m *McService) writeIntValue(client mcp.Client, address string, byteLen int
 	return err
 }
 
-func (m *McService) writeFloatValue(client mcp.Client, address string, length int, value interface{}) error {
+func writeFloatValue(client mcp.Client, address string, length int, value interface{}) error {
 	var floatVal float64
 	switch v := value.(type) {
 	case float64:
@@ -646,7 +646,7 @@ func (m *McService) writeFloatValue(client mcp.Client, address string, length in
 	return err
 }
 
-func (m *McService) writeDoubleValue(client mcp.Client, address string, length int, value interface{}) error {
+func writeDoubleValue(client mcp.Client, address string, length int, value interface{}) error {
 	var doubleVal float64
 	switch v := value.(type) {
 	case float64:
@@ -675,7 +675,7 @@ func (m *McService) writeDoubleValue(client mcp.Client, address string, length i
 	return err
 }
 
-func (m *McService) writeStringValue(client mcp.Client, address string, length int, value interface{}) error {
+func writeStringValue(client mcp.Client, address string, length int, value interface{}) error {
 	var str string
 	switch v := value.(type) {
 	case string:

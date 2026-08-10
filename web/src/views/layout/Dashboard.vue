@@ -339,7 +339,7 @@ const startCooldown = () => {
 
 onMounted(() => {
   fetchStats()
-  uptimeInterval = setInterval(fetchStats, 10000)
+  uptimeInterval = setInterval(fetchStats, 15000)
 })
 
 onUnmounted(() => {

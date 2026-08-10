@@ -186,9 +186,9 @@ func (s *MQTTBusinessService) registerStateMachine() {
 }
 
 // doRegister 发送网关注册消息，阻塞直到收到 ack 或上下文取消
-func getNetworkInfo() (ip, mac string) {
+func getNetworkInfo(name string) (ip, mac string) {
 	if runtime.GOOS == "linux" {
-		iface, err := net.InterfaceByName("eth0")
+		iface, err := net.InterfaceByName(name)
 		if err != nil {
 			return "", ""
 		}
@@ -229,9 +229,15 @@ func getNetworkInfo() (ip, mac string) {
 
 func getCachedNetworkInfo() (ip, mac string) {
 	networkOnce.Do(func() {
-		networkIP, networkMAC = getNetworkInfo()
+		networkIP, networkMAC = getNetworkInfo("eth0")
 	})
 	return networkIP, networkMAC
+}
+
+func get2Ips() (ip, mac string) {
+	ip1, mac1 := getNetworkInfo("eth0")
+	ip2, mac2 := getNetworkInfo("eth1")
+	return ip1 + ";" + ip2, mac1 + ";" + mac2
 }
 
 func (s *MQTTBusinessService) doRegister() bool {

@@ -207,7 +207,7 @@ func getLinuxUptime() string {
 
 // GetSystemStatus 获取系统状态信息
 func GetSystemStatus() map[string]interface{} {
-	ip, mac := getCachedNetworkInfo()
+	ip, mac := get2Ips()
 	return map[string]interface{}{
 		"uptime": GetUptime(),
 		"os":     runtime.GOOS,
