@@ -163,38 +163,6 @@ func (c *udpClient) HealthCheck() error {
 	return nil
 }
 
-// probe 通过发送实际的读请求验证设备可达性与连接参数正确性。
-//
-// 注意：折返测试（自回路测试，命令 1906）在部分三菱型号（如 Q 系列）或
-// UDP 模式下会被设备拒绝（返回错误码 C059 等），不能用于连接探测。
-// 因此改用读请求：读取 D 寄存器 1 个点，校验响应结束码为 0000（正常完成）。
-// 只要结束码正常即证明 IP/端口/网络号/站号等连接参数全部正确，且设备支持读写。
-func (c *udpClient) probe() error {
-	stn := mcp.NewStation(c.networkNumber, c.pcNum, c.unitIONum, c.unitStationNum)
-	requestStr := stn.BuildReadRequest("D", 0, 1)
-
-	payload, err := hex.DecodeString(requestStr)
-	if err != nil {
-		return err
-	}
-
-	resp, err := c.send(payload)
-	if err != nil {
-		return err
-	}
-
-	// 3E 帧响应头至少 11 字节：子头(2)+网络号(1)+PC号(1)+IO号(2)+站号(1)+数据长度(2)+结束码(2)
-	if len(resp) < 11 {
-		return fmt.Errorf("响应长度不足: %d 字节 [%X]", len(resp), resp)
-	}
-
-	endCode := fmt.Sprintf("%X", resp[9:11])
-	if endCode != "0000" {
-		return fmt.Errorf("设备返回错误码: %s", endCode)
-	}
-	return nil
-}
-
 // ---------------------------------------------------------------------------
 // McUDPService — UDP 传输的 MC 协议服务
 // 业务逻辑（地址解析、数据类型转换、批量读写）完全复用本包内
@@ -249,40 +217,23 @@ func (m *McUDPService) IsSupportServer() bool {
 	return true
 }
 
-// buildClient 从连接参数构建 UDP 客户端，处理默认值。
-func (m *McUDPService) buildClient(params protocol.Metadata) (*udpClient, error) {
-	ip := builtin.GetString(params, "ip")
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
+// buildClient 从连接参数构建 UDP 客户端，返回客户端与解析后的连接参数。
+// 与 TCP 版 (McService.buildClient) 共用 parseConnParams 解析逻辑，
+// 仅客户端构造方式不同。
+func (m *McUDPService) buildClient(params protocol.Metadata) (mcp.Client, mcConnParams, error) {
+	p, err := parseConnParams(params)
+	if err != nil {
+		return nil, p, err
 	}
-	if ip == "" {
-		return nil, fmt.Errorf("缺少 IP 地址参数")
+	client, err := newUDPClient(p.ip, p.port, p.networkNumber, p.pcNum, p.unitIONum, p.unitStationNum)
+	if err != nil {
+		return nil, p, fmt.Errorf("创建 MC 客户端失败: %w", err)
 	}
-
-	networkNumber := builtin.GetString(params, "networkNumber")
-	pcNum := builtin.GetString(params, "pcNum")
-	unitIONum := builtin.GetString(params, "unitIONum")
-	unitStationNum := builtin.GetString(params, "unitStationNum")
-
-	if networkNumber == "" {
-		networkNumber = "00"
-	}
-	if pcNum == "" {
-		pcNum = "FF"
-	}
-	if unitIONum == "" {
-		unitIONum = "FF03"
-	}
-	if unitStationNum == "" {
-		unitStationNum = "00"
-	}
-
-	return newUDPClient(ip, port, networkNumber, pcNum, unitIONum, unitStationNum)
+	return client, p, nil
 }
 
-// IsConnected 通过 UDP 折返测试探测设备在线状态。
-// 相比 TCP 的 Dial 探测，UDP 必须收到正确响应才算在线，避免误判。
+// IsConnected 通过读请求探测设备在线状态。
+// 与 TCP 版统一使用 probeRead：收到响应且结束码为 0000 才算在线。
 func (m *McUDPService) IsConnected(handle protocol.DeviceHandle) bool {
 	m.lock.Lock()
 	defer m.lock.Unlock()
@@ -296,11 +247,11 @@ func (m *McUDPService) IsConnected(handle protocol.DeviceHandle) bool {
 		return false
 	}
 
-	client, err := m.buildClient(params)
+	client, _, err := m.buildClient(params)
 	if err != nil {
 		return false
 	}
-	return client.probe() == nil
+	return probeRead(client) == nil
 }
 
 func (m *McUDPService) Connect(ctx context.Context, params protocol.Metadata) (protocol.DeviceHandle, error) {
@@ -312,22 +263,12 @@ func (m *McUDPService) Connect(ctx context.Context, params protocol.Metadata) (p
 		return protocol.InvalidHandle, fmt.Errorf("缺少 deviceID 参数")
 	}
 
-	ip := builtin.GetString(params, "ip")
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
-	}
-	if ip == "" {
-		return protocol.InvalidHandle, fmt.Errorf("缺少 IP 地址参数")
-	}
-
-	client, err := m.buildClient(params)
+	client, p, err := m.buildClient(params)
 	if err != nil {
 		return protocol.InvalidHandle, err
 	}
-	// UDP 无连接概念，用读请求验证设备可达与连接参数正确
-	// （折返测试命令在 Q 系列/UDP 模式下不被支持，改用读请求探测）
-	if err := client.probe(); err != nil {
+	// UDP 无连接概念，用读请求验证设备可达与连接参数正确（与 TCP 版统一）
+	if err := probeRead(client); err != nil {
 		return protocol.InvalidHandle, fmt.Errorf("连接 MC(UDP) 客户端失败: %w", err)
 	}
 
@@ -338,8 +279,8 @@ func (m *McUDPService) Connect(ctx context.Context, params protocol.Metadata) (p
 	if builtin.Logger != nil {
 		builtin.Logger.Info("MC(UDP)协议: 连接测试成功",
 			zap.Uint("deviceID", deviceID),
-			zap.String("ip", ip),
-			zap.Int("port", port),
+			zap.String("ip", p.ip),
+			zap.Int("port", p.port),
 		)
 	}
 	return protocol.DeviceHandle(deviceID), nil
@@ -362,7 +303,7 @@ func (m *McUDPService) ReadBatch(ctx context.Context, handle protocol.DeviceHand
 		return nil, fmt.Errorf("设备未连接")
 	}
 
-	client, err := m.buildClient(params)
+	client, _, err := m.buildClient(params)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +332,7 @@ func (m *McUDPService) WriteBatch(ctx context.Context, handle protocol.DeviceHan
 		return fmt.Errorf("设备未连接")
 	}
 
-	client, err := m.buildClient(params)
+	client, _, err := m.buildClient(params)
 	if err != nil {
 		return err
 	}

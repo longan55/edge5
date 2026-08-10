@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,6 +70,22 @@ func (m *McService) IsSupportServer() bool {
 	return true
 }
 
+// buildClient 从连接参数构建 TCP(3E) MC 客户端，返回客户端与解析后的连接参数。
+// 与 UDP 版 (McUDPService.buildClient) 共用 parseConnParams 解析逻辑，
+// 仅客户端构造方式不同。
+func (m *McService) buildClient(params protocol.Metadata) (mcp.Client, mcConnParams, error) {
+	p, err := parseConnParams(params)
+	if err != nil {
+		return nil, p, err
+	}
+	station := mcp.NewStation(p.networkNumber, p.pcNum, p.unitIONum, p.unitStationNum)
+	client, err := mcp.New3EClient(p.ip, p.port, station)
+	if err != nil {
+		return nil, p, fmt.Errorf("创建 MC 客户端失败: %w", err)
+	}
+	return client, p, nil
+}
+
 func (m *McService) IsConnected(handle protocol.DeviceHandle) bool {
 	m.lock.Lock()
 	defer m.lock.Unlock()
@@ -82,24 +97,11 @@ func (m *McService) IsConnected(handle protocol.DeviceHandle) bool {
 	if !ok {
 		return false
 	}
-	ip := builtin.GetString(params, "ip")
-	if ip == "" {
-		return false
-	}
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
-	}
-	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
+	client, _, err := m.buildClient(params)
 	if err != nil {
 		return false
 	}
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
+	return probeRead(client) == nil
 }
 
 func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (protocol.DeviceHandle, error) {
@@ -111,25 +113,14 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (prot
 		return protocol.InvalidHandle, fmt.Errorf("缺少 deviceID 参数")
 	}
 
-	ip := builtin.GetString(params, "ip")
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
-	}
-
-	if ip == "" {
-		return protocol.InvalidHandle, fmt.Errorf("缺少 IP 地址参数")
-	}
-
-	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
+	client, p, err := m.buildClient(params)
 	if err != nil {
 		return protocol.InvalidHandle, err
 	}
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	if err != nil {
+	// 用读请求验证设备可达与连接参数正确（与 UDP 版统一）
+	if err := probeRead(client); err != nil {
 		return protocol.InvalidHandle, fmt.Errorf("连接 MC 客户端失败: %w", err)
 	}
-	conn.Close()
 
 	m.connectionParams[deviceID] = params
 	m.deviceID = deviceID
@@ -138,8 +129,8 @@ func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (prot
 	if builtin.Logger != nil {
 		builtin.Logger.Info("MC协议: 连接测试成功",
 			zap.Uint("deviceID", deviceID),
-			zap.String("ip", ip),
-			zap.Int("port", port),
+			zap.String("ip", p.ip),
+			zap.Int("port", p.port),
 		)
 	}
 	return protocol.DeviceHandle(deviceID), nil
@@ -162,37 +153,9 @@ func (m *McService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle,
 		return nil, fmt.Errorf("设备未连接")
 	}
 
-	ip := builtin.GetString(params, "ip")
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
-	}
-	networkNumber := builtin.GetString(params, "networkNumber")
-	pcNum := builtin.GetString(params, "pcNum")
-	unitIONum := builtin.GetString(params, "unitIONum")
-	unitStationNum := builtin.GetString(params, "unitStationNum")
-
-	if networkNumber == "" {
-		networkNumber = "00"
-	}
-	if pcNum == "" {
-		pcNum = "FF"
-	}
-	if unitIONum == "" {
-		unitIONum = "FF03"
-	}
-	if unitStationNum == "" {
-		unitStationNum = "00"
-	}
-
-	if ip == "" {
-		return nil, fmt.Errorf("缺少 IP 地址参数")
-	}
-
-	station := mcp.NewStation(networkNumber, pcNum, unitIONum, unitStationNum)
-	client, err := mcp.New3EClient(ip, port, station)
+	client, _, err := m.buildClient(params)
 	if err != nil {
-		return nil, fmt.Errorf("创建 MC 客户端失败: %w", err)
+		return nil, err
 	}
 	if err = client.Connect(); err != nil {
 		return nil, fmt.Errorf("连接 MC 客户端失败: %w", err)
@@ -272,37 +235,9 @@ func (m *McService) WriteBatch(ctx context.Context, handle protocol.DeviceHandle
 		return fmt.Errorf("设备未连接")
 	}
 
-	ip := builtin.GetString(params, "ip")
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
-	}
-	networkNumber := builtin.GetString(params, "networkNumber")
-	pcNum := builtin.GetString(params, "pcNum")
-	unitIONum := builtin.GetString(params, "unitIONum")
-	unitStationNum := builtin.GetString(params, "unitStationNum")
-
-	if networkNumber == "" {
-		networkNumber = "00"
-	}
-	if pcNum == "" {
-		pcNum = "FF"
-	}
-	if unitIONum == "" {
-		unitIONum = "FF03"
-	}
-	if unitStationNum == "" {
-		unitStationNum = "00"
-	}
-
-	if ip == "" {
-		return fmt.Errorf("缺少 IP 地址参数")
-	}
-
-	station := mcp.NewStation(networkNumber, pcNum, unitIONum, unitStationNum)
-	client, err := mcp.New3EClient(ip, port, station)
+	client, _, err := m.buildClient(params)
 	if err != nil {
-		return fmt.Errorf("创建 MC 客户端失败: %w", err)
+		return err
 	}
 	if err = client.Connect(); err != nil {
 		return fmt.Errorf("连接 MC 客户端失败: %w", err)
