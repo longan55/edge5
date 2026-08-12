@@ -754,148 +754,193 @@ func (m *A1EService) readBoolValue(conn *net.TCPConn, plcNumber byte, address st
 }
 
 func (m *A1EService) readByteValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
+	// A1E 按 word(2字节) 读取，1 byte 实际读 1 个 word，取低字节
 	rawData, err := ReadA1E(conn, address, length, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	if len(rawData) == 1 {
+	if length == 1 {
 		return rawData[0], nil
 	}
-	return rawData, nil
+	result := make([]byte, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 2
+		if idx < len(rawData) {
+			result = append(result, rawData[idx])
+		}
+	}
+	return result, nil
 }
 
 func (m *A1EService) readShortValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length*2, false, plcNumber)
+	// A1E 按 word(2字节) 为单位读取，length 个 short 对应 length 个 word
+	rawData, err := ReadA1E(conn, address, length, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	count := len(rawData)
-	if count <= 2 {
-		return int16(Bin2Int(rawData, binary.LittleEndian)), nil
+	if length == 1 {
+		return int16(Bin2Int(rawData[0:2], binary.LittleEndian)), nil
 	}
-	vals := make([]int16, 0, count/2)
-	for i := 0; i < count; i += 2 {
-		vals = append(vals, int16(Bin2Int(rawData[i:i+2], binary.LittleEndian)))
+	vals := make([]int16, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 2
+		if idx+2 > len(rawData) {
+			break
+		}
+		vals = append(vals, int16(Bin2Int(rawData[idx:idx+2], binary.LittleEndian)))
 	}
 	return vals, nil
 }
 
 func (m *A1EService) readUShortValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length*2, false, plcNumber)
+	// A1E 按 word(2字节) 为单位读取，length 个 ushort 对应 length 个 word
+	rawData, err := ReadA1E(conn, address, length, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	count := len(rawData)
-	if count <= 2 {
-		return uint16(Bin2Int(rawData, binary.LittleEndian)), nil
+	if length == 1 {
+		return uint16(Bin2Int(rawData[0:2], binary.LittleEndian)), nil
 	}
-	vals := make([]uint16, 0, count/2)
-	for i := 0; i < count; i += 2 {
-		vals = append(vals, uint16(Bin2Int(rawData[i:i+2], binary.LittleEndian)))
+	vals := make([]uint16, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 2
+		if idx+2 > len(rawData) {
+			break
+		}
+		vals = append(vals, uint16(Bin2Int(rawData[idx:idx+2], binary.LittleEndian)))
 	}
 	return vals, nil
 }
 
 func (m *A1EService) readIntValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length*4, false, plcNumber)
+	// int32 占 2 个 word，length 个 int32 对应 length*2 个 word
+	rawData, err := ReadA1E(conn, address, length*2, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	count := len(rawData)
-	if count <= 4 {
-		return int32(Bin2Int(rawData, binary.LittleEndian)), nil
+	if length == 1 {
+		return int32(Bin2Int(rawData[0:4], binary.LittleEndian)), nil
 	}
-	vals := make([]int32, 0, count/4)
-	for i := 0; i < count; i += 4 {
-		vals = append(vals, int32(Bin2Int(rawData[i:i+4], binary.LittleEndian)))
+	vals := make([]int32, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 4
+		if idx+4 > len(rawData) {
+			break
+		}
+		vals = append(vals, int32(Bin2Int(rawData[idx:idx+4], binary.LittleEndian)))
 	}
 	return vals, nil
 }
 
 func (m *A1EService) readUIntValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length*4, false, plcNumber)
+	// uint32 占 2 个 word，length 个 uint32 对应 length*2 个 word
+	rawData, err := ReadA1E(conn, address, length*2, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	count := len(rawData)
-	if count <= 4 {
-		return uint32(Bin2Int(rawData, binary.LittleEndian)), nil
+	if length == 1 {
+		return uint32(Bin2Int(rawData[0:4], binary.LittleEndian)), nil
 	}
-	vals := make([]uint32, 0, count/4)
-	for i := 0; i < count; i += 4 {
-		vals = append(vals, uint32(Bin2Int(rawData[i:i+4], binary.LittleEndian)))
+	vals := make([]uint32, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 4
+		if idx+4 > len(rawData) {
+			break
+		}
+		vals = append(vals, uint32(Bin2Int(rawData[idx:idx+4], binary.LittleEndian)))
 	}
 	return vals, nil
 }
 
 func (m *A1EService) readLongValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length*8, false, plcNumber)
+	// int64 占 4 个 word，length 个 int64 对应 length*4 个 word
+	rawData, err := ReadA1E(conn, address, length*4, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	count := len(rawData)
-	if count <= 8 {
-		return int64(Bin2Int(rawData, binary.LittleEndian)), nil
+	if length == 1 {
+		return int64(Bin2Int(rawData[0:8], binary.LittleEndian)), nil
 	}
-	vals := make([]int64, 0, count/8)
-	for i := 0; i < count; i += 8 {
-		vals = append(vals, int64(Bin2Int(rawData[i:i+8], binary.LittleEndian)))
+	vals := make([]int64, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 8
+		if idx+8 > len(rawData) {
+			break
+		}
+		vals = append(vals, int64(Bin2Int(rawData[idx:idx+8], binary.LittleEndian)))
 	}
 	return vals, nil
 }
 
 func (m *A1EService) readULongValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length*8, false, plcNumber)
+	// uint64 占 4 个 word，length 个 uint64 对应 length*4 个 word
+	rawData, err := ReadA1E(conn, address, length*4, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	count := len(rawData)
-	if count <= 8 {
-		return uint64(Bin2Int(rawData, binary.LittleEndian)), nil
+	if length == 1 {
+		return uint64(Bin2Int(rawData[0:8], binary.LittleEndian)), nil
 	}
-	vals := make([]uint64, 0, count/8)
-	for i := 0; i < count; i += 8 {
-		vals = append(vals, uint64(Bin2Int(rawData[i:i+8], binary.LittleEndian)))
+	vals := make([]uint64, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 8
+		if idx+8 > len(rawData) {
+			break
+		}
+		vals = append(vals, uint64(Bin2Int(rawData[idx:idx+8], binary.LittleEndian)))
 	}
 	return vals, nil
 }
 
 func (m *A1EService) readFloatValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length*4, false, plcNumber)
+	// float32 占 2 个 word，length 个 float32 对应 length*2 个 word
+	rawData, err := ReadA1E(conn, address, length*2, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	count := len(rawData)
-	if count == 4 {
-		return math.Float32frombits(binary.LittleEndian.Uint32(rawData)), nil
+	if length == 1 {
+		return math.Float32frombits(binary.LittleEndian.Uint32(rawData[0:4])), nil
 	}
-	vals := make([]float32, 0, count/4)
-	for i := 0; i < count; i += 4 {
-		vals = append(vals, math.Float32frombits(binary.LittleEndian.Uint32(rawData[i:i+4])))
+	vals := make([]float32, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 4
+		if idx+4 > len(rawData) {
+			break
+		}
+		vals = append(vals, math.Float32frombits(binary.LittleEndian.Uint32(rawData[idx:idx+4])))
 	}
 	return vals, nil
 }
 
 func (m *A1EService) readDoubleValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length*8, false, plcNumber)
+	// float64 占 4 个 word，length 个 float64 对应 length*4 个 word
+	rawData, err := ReadA1E(conn, address, length*4, false, plcNumber)
 	if err != nil {
 		return nil, err
 	}
-	count := len(rawData)
-	if count == 8 {
-		return math.Float64frombits(binary.LittleEndian.Uint64(rawData)), nil
+	if length == 1 {
+		return math.Float64frombits(binary.LittleEndian.Uint64(rawData[0:8])), nil
 	}
-	vals := make([]float64, 0, count/8)
-	for i := 0; i < count; i += 8 {
-		vals = append(vals, math.Float64frombits(binary.LittleEndian.Uint64(rawData[i:i+8])))
+	vals := make([]float64, 0, length)
+	for i := 0; i < length; i++ {
+		idx := i * 8
+		if idx+8 > len(rawData) {
+			break
+		}
+		vals = append(vals, math.Float64frombits(binary.LittleEndian.Uint64(rawData[idx:idx+8])))
 	}
 	return vals, nil
 }
 
 func (m *A1EService) readStringValue(conn *net.TCPConn, plcNumber byte, address string, length int) (interface{}, error) {
-	rawData, err := ReadA1E(conn, address, length, false, plcNumber)
+	// length 为字符串字节数，A1E 按 word 读取，需转换为 word 数(向上取整)
+	wordCount := (length + 1) / 2
+	rawData, err := ReadA1E(conn, address, wordCount, false, plcNumber)
 	if err != nil {
 		return nil, err
+	}
+	if len(rawData) > length {
+		rawData = rawData[:length]
 	}
 	return strings.TrimRight(string(rawData), "\x00"), nil
 }
