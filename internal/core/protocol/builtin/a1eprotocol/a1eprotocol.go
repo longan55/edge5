@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"edge5/internal/core/protocol"
 	"edge5/internal/core/protocol/builtin"
@@ -24,40 +26,54 @@ func init() {
 }
 
 type MelsecA1EDataType struct {
-	DataCode uint16
-	DataType byte
+	DataCode  uint16
+	DataType  byte
 	AsciiCode string
-	FromBase int
+	FromBase  int
 }
 
 var (
-	A1E_X   = &MelsecA1EDataType{DataCode: 22560, DataType: 1, AsciiCode: "X*", FromBase: 16}
-	A1E_Y   = &MelsecA1EDataType{DataCode: 22816, DataType: 1, AsciiCode: "Y*", FromBase: 16}
-	A1E_M   = &MelsecA1EDataType{DataCode: 19744, DataType: 1, AsciiCode: "M*", FromBase: 10}
-	A1E_S   = &MelsecA1EDataType{DataCode: 21280, DataType: 1, AsciiCode: "S*", FromBase: 10}
-	A1E_F   = &MelsecA1EDataType{DataCode: 17952, DataType: 1, AsciiCode: "F*", FromBase: 10}
-	A1E_B   = &MelsecA1EDataType{DataCode: 16928, DataType: 1, AsciiCode: "B*", FromBase: 16}
-	A1E_TS  = &MelsecA1EDataType{DataCode: 21587, DataType: 1, AsciiCode: "TS", FromBase: 10}
-	A1E_TC  = &MelsecA1EDataType{DataCode: 21571, DataType: 1, AsciiCode: "TC", FromBase: 10}
-	A1E_TN  = &MelsecA1EDataType{DataCode: 21582, DataType: 0, AsciiCode: "TN", FromBase: 10}
-	A1E_CS  = &MelsecA1EDataType{DataCode: 17235, DataType: 1, AsciiCode: "CS", FromBase: 10}
-	A1E_CC  = &MelsecA1EDataType{DataCode: 17219, DataType: 1, AsciiCode: "CC", FromBase: 10}
-	A1E_CN  = &MelsecA1EDataType{DataCode: 17230, DataType: 0, AsciiCode: "CN", FromBase: 10}
-	A1E_D   = &MelsecA1EDataType{DataCode: 17440, DataType: 0, AsciiCode: "D*", FromBase: 10}
-	A1E_W   = &MelsecA1EDataType{DataCode: 22304, DataType: 0, AsciiCode: "W*", FromBase: 16}
-	A1E_R   = &MelsecA1EDataType{DataCode: 21024, DataType: 0, AsciiCode: "R*", FromBase: 10}
+	A1E_X  = &MelsecA1EDataType{DataCode: 22560, DataType: 1, AsciiCode: "X*", FromBase: 16}
+	A1E_Y  = &MelsecA1EDataType{DataCode: 22816, DataType: 1, AsciiCode: "Y*", FromBase: 16}
+	A1E_M  = &MelsecA1EDataType{DataCode: 19744, DataType: 1, AsciiCode: "M*", FromBase: 10}
+	A1E_S  = &MelsecA1EDataType{DataCode: 21280, DataType: 1, AsciiCode: "S*", FromBase: 10}
+	A1E_F  = &MelsecA1EDataType{DataCode: 17952, DataType: 1, AsciiCode: "F*", FromBase: 10}
+	A1E_B  = &MelsecA1EDataType{DataCode: 16928, DataType: 1, AsciiCode: "B*", FromBase: 16}
+	A1E_TS = &MelsecA1EDataType{DataCode: 21587, DataType: 1, AsciiCode: "TS", FromBase: 10}
+	A1E_TC = &MelsecA1EDataType{DataCode: 21571, DataType: 1, AsciiCode: "TC", FromBase: 10}
+	A1E_TN = &MelsecA1EDataType{DataCode: 21582, DataType: 0, AsciiCode: "TN", FromBase: 10}
+	A1E_CS = &MelsecA1EDataType{DataCode: 17235, DataType: 1, AsciiCode: "CS", FromBase: 10}
+	A1E_CC = &MelsecA1EDataType{DataCode: 17219, DataType: 1, AsciiCode: "CC", FromBase: 10}
+	A1E_CN = &MelsecA1EDataType{DataCode: 17230, DataType: 0, AsciiCode: "CN", FromBase: 10}
+	A1E_D  = &MelsecA1EDataType{DataCode: 17440, DataType: 0, AsciiCode: "D*", FromBase: 10}
+	A1E_W  = &MelsecA1EDataType{DataCode: 22304, DataType: 0, AsciiCode: "W*", FromBase: 16}
+	A1E_R  = &MelsecA1EDataType{DataCode: 21024, DataType: 0, AsciiCode: "R*", FromBase: 10}
 )
+
+// a1eConn 持有单个设备的持久 TCP 连接及相关参数。
+// A1E 协议改为持久连接模式：Connect 时建立并保持 TCP 连接，
+// ReadBatch/WriteBatch 复用该连接，Disconnect 时关闭。
+// 避免短连接模式下频繁 DialTCP/Close 导致的 TIME_WAIT 耗尽问题，
+// 特别是在 ARM/Linux 平台上更易触发。
+type a1eConn struct {
+	conn      *net.TCPConn
+	plcNumber byte
+	ip        string
+	port      int
+}
 
 type A1EService struct {
 	lock             sync.Mutex
 	connected        bool
 	deviceID         uint
 	connectionParams map[uint]protocol.Metadata
+	connections      map[uint]*a1eConn // 持久 TCP 连接，按 deviceID 索引
 }
 
 func NewA1EService() *A1EService {
 	return &A1EService{
 		connectionParams: make(map[uint]protocol.Metadata),
+		connections:      make(map[uint]*a1eConn),
 	}
 }
 
@@ -92,35 +108,46 @@ func (m *A1EService) IsSupportServer() bool {
 	return true
 }
 
+// IsConnected 检查持久连接是否存在且仍可用。
+// 通过临时设置读超时并尝试读取一个字节来探测连接活性。
 func (m *A1EService) IsConnected(handle protocol.DeviceHandle) bool {
 	m.lock.Lock()
-	defer m.lock.Unlock()
 	devID := uint(handle)
 	if devID == 0 {
 		devID = m.deviceID
 	}
-	params, ok := m.connectionParams[devID]
-	if !ok {
+	ac, ok := m.connections[devID]
+	m.lock.Unlock()
+
+	if !ok || ac == nil || ac.conn == nil {
 		return false
 	}
-	ip := builtin.GetString(params, "ip")
-	if ip == "" {
-		return false
-	}
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
-	}
-	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
+
+	// 临时设置读超时探测连接活性
+	_ = ac.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	buf := make([]byte, 1)
+	n, err := ac.conn.Read(buf)
+	_ = ac.conn.SetReadDeadline(time.Time{})
+
 	if err != nil {
+		if err == io.EOF || strings.Contains(err.Error(), "i/o timeout") {
+			return false
+		}
 		return false
 	}
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	if err != nil {
-		return false
-	}
-	conn.Close()
+	_ = n
 	return true
+}
+
+// probeA1E 通过发送 A1E 读命令验证设备可达性与协议参数正确性。
+// 读取 D 寄存器 0 号地址的 1 个 word，带 3 秒超时。
+func probeA1E(conn *net.TCPConn, plcNumber byte) error {
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	defer func() {
+		_ = conn.SetDeadline(time.Time{})
+	}()
+	_, err := ReadA1E(conn, "D0", 1, false, plcNumber)
+	return err
 }
 
 func (m *A1EService) Connect(ctx context.Context, params protocol.Metadata) (protocol.DeviceHandle, error) {
@@ -130,57 +157,6 @@ func (m *A1EService) Connect(ctx context.Context, params protocol.Metadata) (pro
 	deviceID := uint(builtin.GetInt(params, "deviceID"))
 	if deviceID == 0 {
 		return protocol.InvalidHandle, fmt.Errorf("缺少 deviceID 参数")
-	}
-
-	ip := builtin.GetString(params, "ip")
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
-	}
-
-	if ip == "" {
-		return protocol.InvalidHandle, fmt.Errorf("缺少 IP 地址参数")
-	}
-
-	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
-	if err != nil {
-		return protocol.InvalidHandle, err
-	}
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	if err != nil {
-		return protocol.InvalidHandle, fmt.Errorf("连接 A1E 客户端失败: %w", err)
-	}
-	conn.Close()
-
-	m.connectionParams[deviceID] = params
-	m.deviceID = deviceID
-	m.connected = true
-
-	if builtin.Logger != nil {
-		builtin.Logger.Info("A1E协议: 连接测试成功",
-			zap.Uint("deviceID", deviceID),
-			zap.String("ip", ip),
-			zap.Int("port", port),
-		)
-	}
-	return protocol.DeviceHandle(deviceID), nil
-}
-
-func (m *A1EService) Disconnect(ctx context.Context, handle protocol.DeviceHandle) error {
-	return nil
-}
-
-func (m *A1EService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle, req protocol.BatchReadRequest) (*protocol.BatchReadResponse, error) {
-	m.lock.Lock()
-	devID := uint(handle)
-	if devID == 0 {
-		devID = m.deviceID
-	}
-	params := m.connectionParams[devID]
-	m.lock.Unlock()
-
-	if params == nil {
-		return nil, fmt.Errorf("设备未连接")
 	}
 
 	ip := builtin.GetString(params, "ip")
@@ -198,22 +174,100 @@ func (m *A1EService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle
 	}
 
 	if ip == "" {
-		return nil, fmt.Errorf("缺少 IP 地址参数")
+		return protocol.InvalidHandle, fmt.Errorf("缺少 IP 地址参数")
+	}
+
+	// 关闭旧连接（如果存在）
+	if old, ok := m.connections[deviceID]; ok && old != nil && old.conn != nil {
+		_ = old.conn.Close()
 	}
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
 	if err != nil {
-		return nil, fmt.Errorf("解析地址失败: %w", err)
+		return protocol.InvalidHandle, err
 	}
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		return nil, fmt.Errorf("连接 PLC 失败: %w", err)
+		return protocol.InvalidHandle, fmt.Errorf("连接 A1E 客户端失败: %w", err)
 	}
-	defer conn.Close()
+
+	// 启用 TCP KeepAlive，在连接空闲时自动检测链路状态
+	_ = conn.SetKeepAlive(true)
+	_ = conn.SetKeepAlivePeriod(30 * time.Second)
+
+	// 发送 A1E 读请求验证设备可达与协议参数正确
+	if err := probeA1E(conn, plcNumber); err != nil {
+		_ = conn.Close()
+		return protocol.InvalidHandle, fmt.Errorf("连接 A1E 客户端失败: %w", err)
+	}
+
+	// 存储持久连接
+	m.connections[deviceID] = &a1eConn{
+		conn:      conn,
+		plcNumber: plcNumber,
+		ip:        ip,
+		port:      port,
+	}
+	m.connectionParams[deviceID] = params
+	m.deviceID = deviceID
+	m.connected = true
+
+	if builtin.Logger != nil {
+		builtin.Logger.Info("A1E协议: 连接测试成功",
+			zap.Uint("deviceID", deviceID),
+			zap.String("ip", ip),
+			zap.Int("port", port),
+			zap.Int("plcNumber", int(plcNumber)),
+		)
+	}
+	return protocol.DeviceHandle(deviceID), nil
+}
+
+func (m *A1EService) Disconnect(ctx context.Context, handle protocol.DeviceHandle) error {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	devID := uint(handle)
+	if devID == 0 {
+		devID = m.deviceID
+	}
+
+	if ac, ok := m.connections[devID]; ok && ac != nil && ac.conn != nil {
+		_ = ac.conn.Close()
+		delete(m.connections, devID)
+	}
+	delete(m.connectionParams, devID)
+
+	if len(m.connections) == 0 {
+		m.connected = false
+	}
+	return nil
+}
+
+func (m *A1EService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle, req protocol.BatchReadRequest) (*protocol.BatchReadResponse, error) {
+	m.lock.Lock()
+	devID := uint(handle)
+	if devID == 0 {
+		devID = m.deviceID
+	}
+	ac, ok := m.connections[devID]
+	m.lock.Unlock()
+
+	if !ok || ac == nil || ac.conn == nil {
+		return nil, fmt.Errorf("设备未连接")
+	}
+
+	// 设置读写超时，防止读取永久阻塞
+	if err := ac.conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, fmt.Errorf("设置连接超时失败: %w", err)
+	}
+	defer func() {
+		_ = ac.conn.SetDeadline(time.Time{})
+	}()
 
 	results := make([]protocol.BatchReadResult, 0, len(req.Points))
 	for _, pt := range req.Points {
-		result := m.readPoint(conn, plcNumber, pt)
+		result := m.readPoint(ac.conn, ac.plcNumber, pt)
 		results = append(results, result)
 	}
 
@@ -277,43 +331,23 @@ func (m *A1EService) WriteBatch(ctx context.Context, handle protocol.DeviceHandl
 	if devID == 0 {
 		devID = m.deviceID
 	}
-	params := m.connectionParams[devID]
+	ac, ok := m.connections[devID]
 	m.lock.Unlock()
 
-	if params == nil {
+	if !ok || ac == nil || ac.conn == nil {
 		return fmt.Errorf("设备未连接")
 	}
 
-	ip := builtin.GetString(params, "ip")
-	port := builtin.GetInt(params, "port")
-	if port <= 0 {
-		port = 6000
+	// 设置读写超时，防止读取永久阻塞
+	if err := ac.conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return fmt.Errorf("设置连接超时失败: %w", err)
 	}
-	plcNumberStr := builtin.GetString(params, "plcNumber")
-	var plcNumber byte = 0xFF
-	if plcNumberStr != "" {
-		n, err := strconv.ParseUint(plcNumberStr, 16, 8)
-		if err == nil {
-			plcNumber = byte(n)
-		}
-	}
-
-	if ip == "" {
-		return fmt.Errorf("缺少 IP 地址参数")
-	}
-
-	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
-	if err != nil {
-		return fmt.Errorf("解析地址失败: %w", err)
-	}
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	if err != nil {
-		return fmt.Errorf("连接 PLC 失败: %w", err)
-	}
-	defer conn.Close()
+	defer func() {
+		_ = ac.conn.SetDeadline(time.Time{})
+	}()
 
 	for _, item := range req.Items {
-		if err := m.writePoint(conn, plcNumber, item); err != nil {
+		if err := m.writePoint(ac.conn, ac.plcNumber, item); err != nil {
 			return fmt.Errorf("写入点位 %s 失败: %w", item.Point.Name, err)
 		}
 	}

@@ -721,9 +721,9 @@ func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams mo
 		return nil, fmt.Errorf("设备不存在: %w", err)
 	}
 
-	if device.Status != 1 {
-		return nil, fmt.Errorf("设备未启用")
-	}
+	// if device.Status != 1 {
+	// 	return nil, fmt.Errorf("设备未启用")
+	// }
 
 	reg := protocol.DefaultRegistry()
 	proto, ok := reg.Get(device.Protocol)
@@ -911,9 +911,9 @@ func (s *MQTTBusinessService) executeDeviceRead(deviceSn string, readParams mode
 		return nil, fmt.Errorf("设备不存在: %w", err)
 	}
 
-	if device.Status != 1 {
-		return nil, fmt.Errorf("设备未启用")
-	}
+	// if device.Status != 1 {
+	// 	return nil, fmt.Errorf("设备未启用")
+	// }
 
 	reg := protocol.DefaultRegistry()
 	proto, ok := reg.Get(device.Protocol)
