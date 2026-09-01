@@ -740,26 +740,33 @@ func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams mo
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	handle, err := proto.Connect(ctx, connParams)
-	if err != nil {
-		errMsg := err.Error()
-		details := make([]model.DeviceWriteDetail, 0, len(writeParams.Points))
-		for _, point := range writeParams.Points {
-			details = append(details, model.DeviceWriteDetail{
-				Resource: point.Resource,
-				Value:    nil,
-				Error:    errMsg,
-			})
+	// 已连接（如采集任务持有持久长连接）时直接写，复用连接且操作后不断开；
+	// 未连接时临时建立连接，操作完断开。避免对 1E 等持久连接协议触发
+	// "关旧建新"重拨与采集互踢 PLC 连接（1 连接限制下新连接会被立即关闭报 EOF）。
+	handle := protocol.DeviceHandle(device.ID)
+	if !proto.IsConnected(handle) {
+		var connErr error
+		handle, connErr = proto.Connect(ctx, connParams)
+		if connErr != nil {
+			errMsg := connErr.Error()
+			details := make([]model.DeviceWriteDetail, 0, len(writeParams.Points))
+			for _, point := range writeParams.Points {
+				details = append(details, model.DeviceWriteDetail{
+					Resource: point.Resource,
+					Value:    nil,
+					Error:    errMsg,
+				})
+			}
+			return &model.DeviceWriteReply{
+				Code:    3,
+				Message: errMsg,
+				Details: details,
+			}, nil
 		}
-		return &model.DeviceWriteReply{
-			Code:    3,
-			Message: errMsg,
-			Details: details,
-		}, nil
+		defer func() {
+			_ = proto.Disconnect(context.Background(), handle)
+		}()
 	}
-	defer func() {
-		_ = proto.Disconnect(context.Background(), handle)
-	}()
 
 	items := make([]protocol.BatchWriteItem, 0, len(writeParams.Points))
 	points := make([]protocol.Point, 0, len(writeParams.Points))
@@ -817,7 +824,22 @@ func (s *MQTTBusinessService) executeDeviceWrite(deviceSn string, writeParams mo
 		Options: writeParams.Options,
 	}
 
+	// WriteBatch 刚断开 TCP 连接，PLC 释放连接表项存在延迟（几十到几百毫秒），
+	// 立即拨号读回容易被拒或读到 EOF（此时写入本身已成功生效）。
+	// 写完后先等 100ms 待 PLC 释放连接再读回；若仍失败，再等 150ms 重试一次。
+	select {
+	case <-ctx.Done():
+	case <-time.After(100 * time.Millisecond):
+	}
+
 	readResp, err := proto.ReadBatch(ctx, handle, readReq)
+	if err != nil {
+		select {
+		case <-ctx.Done():
+		case <-time.After(150 * time.Millisecond):
+			readResp, err = proto.ReadBatch(ctx, handle, readReq)
+		}
+	}
 	if err != nil {
 		errMsg := err.Error()
 		details := make([]model.DeviceWriteDetail, 0, len(writeParams.Points))
@@ -930,27 +952,34 @@ func (s *MQTTBusinessService) executeDeviceRead(deviceSn string, readParams mode
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	handle, err := proto.Connect(ctx, connParams)
-	if err != nil {
-		errMsg := err.Error()
-		details := make([]model.DeviceReadDetail, 0, len(readParams.Points))
-		for _, point := range readParams.Points {
-			details = append(details, model.DeviceReadDetail{
-				Resource: point.Resource,
-				DataType: point.DataType,
-				Value:    nil,
-				Error:    errMsg,
-			})
+	// 已连接（如采集任务持有持久长连接）时直接读，复用连接且操作后不断开；
+	// 未连接时临时建立连接，操作完断开。避免对 1E 等持久连接协议触发
+	// "关旧建新"重拨与采集互踢 PLC 连接。
+	handle := protocol.DeviceHandle(device.ID)
+	if !proto.IsConnected(handle) {
+		var connErr error
+		handle, connErr = proto.Connect(ctx, connParams)
+		if connErr != nil {
+			errMsg := connErr.Error()
+			details := make([]model.DeviceReadDetail, 0, len(readParams.Points))
+			for _, point := range readParams.Points {
+				details = append(details, model.DeviceReadDetail{
+					Resource: point.Resource,
+					DataType: point.DataType,
+					Value:    nil,
+					Error:    errMsg,
+				})
+			}
+			return &model.DeviceReadReply{
+				Code:    3,
+				Message: errMsg,
+				Details: details,
+			}, nil
 		}
-		return &model.DeviceReadReply{
-			Code:    3,
-			Message: errMsg,
-			Details: details,
-		}, nil
+		defer func() {
+			_ = proto.Disconnect(context.Background(), handle)
+		}()
 	}
-	defer func() {
-		_ = proto.Disconnect(context.Background(), handle)
-	}()
 
 	points := make([]protocol.Point, 0, len(readParams.Points))
 	for _, point := range readParams.Points {

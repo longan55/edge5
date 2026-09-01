@@ -66,6 +66,14 @@ func parseConnParams(params protocol.Metadata) (mcConnParams, error) {
 // 读命令（0104）是 PLC 必须支持的核心功能，校验结束码 0000 可同时确认
 // 设备可达、3E 帧协议正确、网络号/站号等连接参数无误。
 func probeRead(client mcp.Client) error {
+	// 长连接版 client（TCP 3E Alive）的 Read/Write 复用 c.conn，
+	// 需要先 Connect 建立连接才能使用；UDP 版的 Connect/Close 为空操作，
+	// 故此处统一调用对 UDP 无影响。
+	if err := client.Connect(); err != nil {
+		return err
+	}
+	defer client.Close()
+
 	resp, err := client.Read("D", 0, 1)
 	if err != nil {
 		return err

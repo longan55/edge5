@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"edge5/global"
-	"edge5/internal/model"
 	"edge5/internal/core/protocol"
+	"edge5/internal/model"
 	"edge5/internal/utils/response"
 
 	"github.com/gin-gonic/gin"
@@ -220,18 +220,6 @@ func (h *DeviceDebugHandler) doRead(deviceID uint64, params []DebugReadParam) ([
 	}
 	connParams["deviceID"] = float64(device.ID)
 
-	// 连接设备
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	handle, err := proto.Connect(ctx, connParams)
-	if err != nil {
-		return nil, fmt.Errorf("连接设备失败: %w", err)
-	}
-	defer func() {
-		_ = proto.Disconnect(context.Background(), handle)
-	}()
-
 	// 构建读取请求
 	points := make([]protocol.Point, 0, len(params))
 	for _, p := range params {
@@ -246,8 +234,25 @@ func (h *DeviceDebugHandler) doRead(deviceID uint64, params []DebugReadParam) ([
 			Count:    count,
 		})
 	}
-
 	readReq := protocol.BatchReadRequest{Points: points}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 已连接（如采集任务持有持久长连接）时直接读，复用连接且操作后不断开；
+	// 未连接时临时建立连接，操作完断开。避免对 1E 等持久连接协议在复用连接
+	// 后被 Disconnect 误删，或触发"关旧建新"重拨与采集互踢 PLC 连接。
+	handle := protocol.DeviceHandle(device.ID)
+	if !proto.IsConnected(handle) {
+		var connErr error
+		handle, connErr = proto.Connect(ctx, connParams)
+		if connErr != nil {
+			return nil, fmt.Errorf("连接设备失败: %w", connErr)
+		}
+		defer func() {
+			_ = proto.Disconnect(context.Background(), handle)
+		}()
+	}
 	resp, err := proto.ReadBatch(ctx, handle, readReq)
 	if err != nil {
 		return nil, err
@@ -287,17 +292,6 @@ func (h *DeviceDebugHandler) doWrite(deviceID uint64, params []DebugWriteParam) 
 	}
 	connParams["deviceID"] = float64(device.ID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	handle, err := proto.Connect(ctx, connParams)
-	if err != nil {
-		return fmt.Errorf("连接设备失败: %w", err)
-	}
-	defer func() {
-		_ = proto.Disconnect(context.Background(), handle)
-	}()
-
 	items := make([]protocol.BatchWriteItem, 0, len(params))
 	for _, p := range params {
 		count := p.Length
@@ -314,9 +308,29 @@ func (h *DeviceDebugHandler) doWrite(deviceID uint64, params []DebugWriteParam) 
 			Value: p.WriteValue,
 		})
 	}
-
 	writeReq := protocol.BatchWriteRequest{Items: items}
-	return proto.WriteBatch(ctx, handle, writeReq)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 已连接（如采集任务持有持久长连接）时直接写，复用连接且操作后不断开；
+	// 未连接时临时建立连接，操作完断开。避免对 1E 等持久连接协议在复用连接
+	// 后被 Disconnect 误删，或触发"关旧建新"重拨与采集互踢 PLC 连接。
+	handle := protocol.DeviceHandle(device.ID)
+	if !proto.IsConnected(handle) {
+		var connErr error
+		handle, connErr = proto.Connect(ctx, connParams)
+		if connErr != nil {
+			return fmt.Errorf("连接设备失败: %w", connErr)
+		}
+		defer func() {
+			_ = proto.Disconnect(context.Background(), handle)
+		}()
+	}
+	if err := proto.WriteBatch(ctx, handle, writeReq); err != nil {
+		return err
+	}
+	return nil
 }
 
 // parseDeviceConfigToMetadata 解析设备配置为协议 Metadata

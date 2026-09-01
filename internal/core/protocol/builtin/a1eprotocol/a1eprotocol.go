@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math"
 	"net"
 	"strconv"
@@ -63,7 +62,11 @@ type a1eConn struct {
 }
 
 type A1EService struct {
-	lock             sync.Mutex
+	lock sync.Mutex
+	// ioLock 串行化网络 I/O（拨号/探测/收发/断开）。
+	// A1E 为持久长连接 + 请求-响应协议：并发读写同一条连接会串扰响应；
+	// 且 PLC 通常只允许 1 个 TCP 连接，采集任务与调试/MQTT 并发拨号会互踢。
+	ioLock           sync.Mutex
 	connected        bool
 	deviceID         uint
 	connectionParams map[uint]protocol.Metadata
@@ -123,20 +126,36 @@ func (m *A1EService) IsConnected(handle protocol.DeviceHandle) bool {
 		return false
 	}
 
-	// 临时设置读超时探测连接活性
+	// ioLock 串行化探测，避免与并发采集/调试/MQTT 收发互扰
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
+
+	// 临时设置读超时探测连接活性：
+	// 连接存活且空闲 → Read 超时（i/o timeout）→ 存活；
+	// 读到数据 → 存活；对端已关闭 → 立即 EOF → 已死。
 	_ = ac.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	buf := make([]byte, 1)
-	n, err := ac.conn.Read(buf)
+	_, err := ac.conn.Read(buf)
 	_ = ac.conn.SetReadDeadline(time.Time{})
 
 	if err != nil {
-		if err == io.EOF || strings.Contains(err.Error(), "i/o timeout") {
-			return false
-		}
-		return false
+		return strings.Contains(err.Error(), "i/o timeout")
 	}
-	_ = n
 	return true
+}
+
+// a1eConnAlive 通过短超时读取探测持久连接是否存活。
+// 连接存活且空闲时 Read 等待超时（i/o timeout）；对端已关闭时立即返回 EOF。
+func a1eConnAlive(conn *net.TCPConn) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	buf := make([]byte, 1)
+	_, err := conn.Read(buf)
+	_ = conn.SetReadDeadline(time.Time{})
+	if err == nil {
+		// 读到数据（并发操作残留响应），连接存活
+		return true
+	}
+	return strings.Contains(err.Error(), "i/o timeout")
 }
 
 // probeA1E 通过发送 A1E 读命令验证设备可达性与协议参数正确性。
@@ -151,9 +170,6 @@ func probeA1E(conn *net.TCPConn, plcNumber byte) error {
 }
 
 func (m *A1EService) Connect(ctx context.Context, params protocol.Metadata) (protocol.DeviceHandle, error) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
 	deviceID := uint(builtin.GetInt(params, "deviceID"))
 	if deviceID == 0 {
 		return protocol.InvalidHandle, fmt.Errorf("缺少 deviceID 参数")
@@ -177,10 +193,41 @@ func (m *A1EService) Connect(ctx context.Context, params protocol.Metadata) (pro
 		return protocol.InvalidHandle, fmt.Errorf("缺少 IP 地址参数")
 	}
 
-	// 关闭旧连接（如果存在）
-	if old, ok := m.connections[deviceID]; ok && old != nil && old.conn != nil {
+	// ioLock 串行化网络 I/O（复用探测、拨号、probeA1E），
+	// 避免采集任务正在收发时 MQTT/调试请求并发拨号互踢 PLC 连接
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
+
+	m.lock.Lock()
+	// 已有持久连接且连接参数未变、连接仍存活 → 直接复用。
+	// 1E 为持久长连接：采集任务持有连接期间，若 MQTT/调试指令触发 Connect
+	// 强制"关旧建新"，PLC（通常仅允许 1 个 TCP 连接）会因上一个连接刚断开、
+	// 连接表未释放而立即关闭新连接，probeA1E 读响应时报 EOF。
+	old, hasOld := m.connections[deviceID]
+	if hasOld && old != nil && old.conn != nil {
+		oldParams := m.connectionParams[deviceID]
+		if builtin.GetString(oldParams, "ip") == ip &&
+			builtin.GetInt(oldParams, "port") == port &&
+			old.plcNumber == plcNumber &&
+			a1eConnAlive(old.conn) {
+			m.connectionParams[deviceID] = params
+			m.deviceID = deviceID
+			m.connected = true
+			m.lock.Unlock()
+
+			if builtin.Logger != nil {
+				builtin.Logger.Info("A1E协议: 复用已有持久连接",
+					zap.Uint("deviceID", deviceID),
+					zap.String("ip", ip),
+					zap.Int("port", port),
+				)
+			}
+			return protocol.DeviceHandle(deviceID), nil
+		}
+		// 连接已死或参数变更 → 关闭旧连接走重建
 		_ = old.conn.Close()
 	}
+	m.lock.Unlock()
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", ip, port))
 	if err != nil {
@@ -201,7 +248,7 @@ func (m *A1EService) Connect(ctx context.Context, params protocol.Metadata) (pro
 		return protocol.InvalidHandle, fmt.Errorf("连接 A1E 客户端失败: %w", err)
 	}
 
-	// 存储持久连接
+	m.lock.Lock()
 	m.connections[deviceID] = &a1eConn{
 		conn:      conn,
 		plcNumber: plcNumber,
@@ -211,6 +258,7 @@ func (m *A1EService) Connect(ctx context.Context, params protocol.Metadata) (pro
 	m.connectionParams[deviceID] = params
 	m.deviceID = deviceID
 	m.connected = true
+	m.lock.Unlock()
 
 	if builtin.Logger != nil {
 		builtin.Logger.Info("A1E协议: 连接测试成功",
@@ -224,6 +272,10 @@ func (m *A1EService) Connect(ctx context.Context, params protocol.Metadata) (pro
 }
 
 func (m *A1EService) Disconnect(ctx context.Context, handle protocol.DeviceHandle) error {
+	// ioLock 串行化，避免与并发的收发/拨号操作竞争同一条持久连接
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
+
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
@@ -256,6 +308,11 @@ func (m *A1EService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle
 	if !ok || ac == nil || ac.conn == nil {
 		return nil, fmt.Errorf("设备未连接")
 	}
+
+	// ioLock 串行化网络 I/O：A1E 为请求-响应协议且持久连接复用，
+	// 并发读写会串扰响应；也避免与 Connect 的探测/重拨互踢连接
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
 
 	// 设置读写超时，防止读取永久阻塞
 	if err := ac.conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -337,6 +394,10 @@ func (m *A1EService) WriteBatch(ctx context.Context, handle protocol.DeviceHandl
 	if !ok || ac == nil || ac.conn == nil {
 		return fmt.Errorf("设备未连接")
 	}
+
+	// ioLock 串行化网络 I/O，与 ReadBatch/Connect/Disconnect 共用
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
 
 	// 设置读写超时，防止读取永久阻塞
 	if err := ac.conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {

@@ -24,7 +24,11 @@ func init() {
 }
 
 type McService struct {
-	lock             sync.Mutex
+	lock sync.Mutex
+	// ioLock 保护网络 I/O 临界区（拨号-收发-断开）串行化。
+	// PLC 通常只允许 1 个 TCP 连接，采集任务与调试/MQTT 读写若并发拨号会互踢导致 EOF。
+	// ioLock 让并发请求排队执行，批间自然交替使用 PLC 连接，不长期占用。
+	ioLock           sync.Mutex
 	connected        bool
 	deviceID         uint
 	connectionParams map[uint]protocol.Metadata
@@ -73,13 +77,20 @@ func (m *McService) IsSupportServer() bool {
 // buildClient 从连接参数构建 TCP(3E) MC 客户端，返回客户端与解析后的连接参数。
 // 与 UDP 版 (McUDPService.buildClient) 共用 parseConnParams 解析逻辑，
 // 仅客户端构造方式不同。
+//
+// 使用长连接版 New3EAliveClient：Connect/Close 真正拨号/断开，Read/Write/BitRead
+// 复用同一条 TCP 连接。配合 ReadBatch/WriteBatch 中的 "client.Connect() +
+// defer client.Close()" 模式，实现"每批一连接，批内多点位共用，批结束立即断开"。
+// 相比旧版 New3EClient（Connect/Close 为空操作、每次 Read 内部独立拨号），
+// 可消除"每点位一连接"造成的 PLC 连接竞争与交替 EOF 问题，同时不长期占用
+// PLC 的有限连接数资源。
 func (m *McService) buildClient(params protocol.Metadata) (mcp.Client, mcConnParams, error) {
 	p, err := parseConnParams(params)
 	if err != nil {
 		return nil, p, err
 	}
 	station := mcp.NewStation(p.networkNumber, p.pcNum, p.unitIONum, p.unitStationNum)
-	client, err := mcp.New3EClient(p.ip, p.port, station)
+	client, err := mcp.New3EAliveClient(p.ip, p.port, station)
 	if err != nil {
 		return nil, p, fmt.Errorf("创建 MC 客户端失败: %w", err)
 	}
@@ -88,15 +99,21 @@ func (m *McService) buildClient(params protocol.Metadata) (mcp.Client, mcConnPar
 
 func (m *McService) IsConnected(handle protocol.DeviceHandle) bool {
 	m.lock.Lock()
-	defer m.lock.Unlock()
 	devID := uint(handle)
 	if devID == 0 {
 		devID = m.deviceID
 	}
 	params, ok := m.connectionParams[devID]
+	m.lock.Unlock()
+
 	if !ok {
 		return false
 	}
+
+	// ioLock 串行化网络 I/O，避免与并发采集/调试/MQTT 请求互踢 PLC 连接
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
+
 	client, _, err := m.buildClient(params)
 	if err != nil {
 		return false
@@ -106,25 +123,39 @@ func (m *McService) IsConnected(handle protocol.DeviceHandle) bool {
 
 func (m *McService) Connect(ctx context.Context, params protocol.Metadata) (protocol.DeviceHandle, error) {
 	m.lock.Lock()
-	defer m.lock.Unlock()
-
 	deviceID := uint(builtin.GetInt(params, "deviceID"))
 	if deviceID == 0 {
+		m.lock.Unlock()
 		return protocol.InvalidHandle, fmt.Errorf("缺少 deviceID 参数")
 	}
+	// 检查该设备是否已建立过连接（如采集任务已 Connect 并存入连接参数）。
+	// 已连接则跳过 probeRead 拨号验证，避免与并发采集/调试/MQTT 拨号互踢 PLC
+	// 连接；设备实际可达性由后续 ReadBatch/WriteBatch 兜底验证。
+	_, alreadyConnected := m.connectionParams[deviceID]
+	m.lock.Unlock()
+
+	// ioLock 串行化网络 I/O：避免采集任务正在拨号/读写时，调试/MQTT 请求并发拨号互踢
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
 
 	client, p, err := m.buildClient(params)
 	if err != nil {
 		return protocol.InvalidHandle, err
 	}
-	// 用读请求验证设备可达与连接参数正确（与 UDP 版统一）
-	if err := probeRead(client); err != nil {
-		return protocol.InvalidHandle, fmt.Errorf("连接 MC 客户端失败: %w", err)
+	// 仅首次连接时用读请求验证设备可达与连接参数正确（与 UDP 版统一）。
+	// 已连接（如采集任务进行中）时跳过，避免 probeRead 拨号与紧接的
+	// ReadBatch/WriteBatch 拨号撞 PLC 连接释放延迟导致 EOF。
+	if !alreadyConnected {
+		if err := probeRead(client); err != nil {
+			return protocol.InvalidHandle, fmt.Errorf("连接 MC 客户端失败: %w", err)
+		}
 	}
 
+	m.lock.Lock()
 	m.connectionParams[deviceID] = params
 	m.deviceID = deviceID
 	m.connected = true
+	m.lock.Unlock()
 
 	if builtin.Logger != nil {
 		builtin.Logger.Info("MC协议: 连接测试成功",
@@ -141,6 +172,11 @@ func (m *McService) Disconnect(ctx context.Context, handle protocol.DeviceHandle
 }
 
 func (m *McService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle, req protocol.BatchReadRequest) (*protocol.BatchReadResponse, error) {
+	// ioLock 串行化网络 I/O：采集任务与调试/MQTT 读写共用同一 PLC 连接，并发拨号会互踢。
+	// 加锁后并发请求排队执行，采集批结束释放锁，调试/MQTT 即可插入。
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
+
 	m.lock.Lock()
 	devID := uint(handle)
 	if devID == 0 {
@@ -223,6 +259,10 @@ func readPoint(client mcp.Client, pt protocol.Point) protocol.BatchReadResult {
 }
 
 func (m *McService) WriteBatch(ctx context.Context, handle protocol.DeviceHandle, req protocol.BatchWriteRequest) error {
+	// ioLock 串行化网络 I/O，与 ReadBatch/Connect 共用，避免并发拨号互踢
+	m.ioLock.Lock()
+	defer m.ioLock.Unlock()
+
 	m.lock.Lock()
 	devID := uint(handle)
 	if devID == 0 {
