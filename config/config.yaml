@@ -22,12 +22,11 @@ cache:
 
 mqtt:
   enabled: true
-  broker: "mqtt://127.0.0.1:1883"
   protocol: "mqtt://"
-  host: ""
+  host: "127.0.0.1"
   port: 1883
-  username: ""
-  password: ""
+  username: "public"
+  password: "public"
   client_id: "edge5-gateway"
   keep_alive: 60
   qos: 0
