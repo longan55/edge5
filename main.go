@@ -18,6 +18,7 @@ import (
 	_ "edge5/internal/core/protocol/builtin/mitcncprotocol"
 	_ "edge5/internal/core/protocol/builtin/panasonic"
 	_ "edge5/internal/core/protocol/builtin/s7"
+	_ "edge5/internal/core/protocol/builtin/modbusrtu"
 	"edge5/internal/repository"
 	"edge5/internal/router"
 	"edge5/internal/service"
