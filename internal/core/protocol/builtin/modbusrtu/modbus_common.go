@@ -15,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 
-	modbus "github.com/thinkgos/gomodbus/v2"
-
 	"edge5/internal/core/protocol"
 )
 
@@ -27,15 +25,29 @@ type modbusAddress struct {
 	isBit bool   // 线圈/离散输入为 true
 }
 
-// parseAddress 按前缀识别功能码。5 位以上标准地址(00001/10001/30001/40001)
-// 按首字符识别功能码，地址 1-based 转 0-based；纯数字（不足5位）默认保持寄存器。
+// parseAddress 解析点位地址，支持三种写法：
+//   - 十六进制线地址（直接作为 0-based 线地址，默认保持寄存器 FC3）：0x3A、0X3a、3Ah
+//   - 标准 5 位编址（十进制，1-based）：00001/10001/30001/40001，自动识别功能码
+//   - 纯十进制数字（1-based，默认保持寄存器）：600
+//
+// 注意：十六进制按线地址直接使用、不再 -1；十进制为人工习惯的 1-based。
+// 例如 0x3A 与 59（十进制）等价，对应标准编址 40059；十进制 600 对应线地址 599。
 func parseAddress(address string) (modbusAddress, error) {
 	s := strings.TrimSpace(address)
 	if s == "" {
 		return modbusAddress{}, fmt.Errorf("地址为空")
 	}
 
-	// 5 位以上且首字符为功能码标识
+	// 十六进制优先识别（0x/0X 前缀或 h/H 后缀），直接作为 0-based 线地址
+	if hexDigits, ok := stripHexMarker(s); ok {
+		n, err := strconv.ParseUint(hexDigits, 16, 16)
+		if err != nil || n > 0xFFFF {
+			return modbusAddress{}, fmt.Errorf("十六进制地址无效: %s（示例：0x3A、3Ah，范围 0x0~0xFFFF）", address)
+		}
+		return modbusAddress{code: 4, addr: uint16(n), isBit: false}, nil
+	}
+
+	// 5 位以上且首字符为功能码标识（标准十进制编址）
 	if len(s) >= 5 {
 		first := s[0]
 		rest := s[1:]
@@ -58,12 +70,52 @@ func parseAddress(address string) (modbusAddress, error) {
 		}
 	}
 
-	// 纯数字 → 默认保持寄存器
+	// 纯数字 → 默认保持寄存器（1-based → 线地址 -1）
 	n, err := strconv.Atoi(s)
 	if err != nil || n < 1 {
-		return modbusAddress{}, fmt.Errorf("地址无效: %s", address)
+		return modbusAddress{}, fmt.Errorf("地址无效: %s（十进制示例如 600/40600，十六进制示例如 0x3A）", address)
 	}
 	return modbusAddress{code: 4, addr: uint16(n - 1), isBit: false}, nil
+}
+
+// stripHexMarker 识别十六进制标记：0x/0X 前缀（至少 3 字符）或 h/H 后缀（至少 2 字符），
+// 返回去掉标记后的十六进制数字部分。
+func stripHexMarker(s string) (string, bool) {
+	if len(s) >= 3 && (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")) {
+		return s[2:], true
+	}
+	if len(s) >= 2 && (s[len(s)-1] == 'h' || s[len(s)-1] == 'H') {
+		return s[:len(s)-1], true
+	}
+	return "", false
+}
+
+// parseSlaveID 从连接参数解析站号，兼容十进制（80）与十六进制（0x50、50h）。
+// 来自 JSON 配置的数值通常是 float64，手工输入的字符串支持 0x 前缀。
+func parseSlaveID(params protocol.Metadata) byte {
+	v, ok := params["slave_id"]
+	if !ok {
+		return 0
+	}
+	switch val := v.(type) {
+	case string:
+		s := strings.TrimSpace(val)
+		if hexDigits, isHex := stripHexMarker(s); isHex {
+			if n, err := strconv.ParseUint(hexDigits, 16, 8); err == nil {
+				return byte(n)
+			}
+		}
+		if n, err := strconv.ParseUint(s, 10, 8); err == nil {
+			return byte(n)
+		}
+	case float64:
+		return byte(int(val))
+	case int:
+		return byte(val)
+	case int64:
+		return byte(val)
+	}
+	return 0
 }
 
 // dataTypeInfo 数据类型解析结果
@@ -172,16 +224,22 @@ func planReadBatch(points []protocol.Point) ([]readSegment, error) {
 		if err != nil {
 			return nil, fmt.Errorf("点位 %s: %w", pt.Name, err)
 		}
-		rc := info.regCount
+		// 长度（Count）语义：
+		//   - string：字节数，寄存器数 = ceil(字节数/2)
+		//   - 其他类型：元素个数，总寄存器数 = 单元素寄存器数 × 长度（长度>1 时返回数组）
+		//   - 线圈/离散输入：长度 = 位数
+		length := pt.Count
+		if length <= 0 {
+			length = 1
+		}
+		var rc uint16
 		if info.isString {
-			length := pt.Count
-			if length <= 0 {
-				length = 1
-			}
 			rc = uint16((length + 1) / 2)
 			if rc < 1 {
 				rc = 1
 			}
+		} else {
+			rc = info.regCount * uint16(length)
 		}
 		plans = append(plans, pointPlan{pt: pt, addr: addr, info: info, regCount: rc, index: i})
 	}
@@ -234,9 +292,17 @@ func planReadBatch(points []protocol.Point) ([]readSegment, error) {
 	return segments, nil
 }
 
+// modbusReader 读取类功能码所需的传输接口（由 rtuMaster 实现）
+type modbusReader interface {
+	ReadCoils(slaveID byte, address, quantity uint16) ([]byte, error)
+	ReadDiscreteInputs(slaveID byte, address, quantity uint16) ([]byte, error)
+	ReadInputRegisters(slaveID byte, address, quantity uint16) ([]uint16, error)
+	ReadHoldingRegisters(slaveID byte, address, quantity uint16) ([]uint16, error)
+}
+
 // readSegmentData 按 code 调用一次 Modbus 读取，返回线路字节流
 // 位段：[]byte 位打包（每字节8位）；寄存器段：[]uint16 → 转 [hi,lo,hi,lo...] 字节流
-func readSegmentData(client modbus.Client, slaveID byte, seg readSegment) ([]byte, error) {
+func readSegmentData(client modbusReader, slaveID byte, seg readSegment) ([]byte, error) {
 	switch seg.code {
 	case 1:
 		return client.ReadCoils(slaveID, seg.start, seg.count)
@@ -302,20 +368,41 @@ func reorderBytes(b []byte, order string) []byte {
 	return out
 }
 
-// decodePoint 从段结果字节流按偏移解析单个点位值
+// decodePoint 从段结果字节流按偏移解析点位值。
+// 长度(Count)>1 的数值/位类型返回数组；string 长度为字节数。
 // segData: 位段为位打包字节，寄存器段为 [hi,lo,hi,lo...] 字节流
 func decodePoint(p pointPlan, segData []byte, segStart uint16, isBitSeg bool) (interface{}, error) {
+	length := p.pt.Count
+	if length <= 0 {
+		length = 1
+	}
+
 	// 位访问（bool / byte 在线圈地址）
 	if isBitSeg || p.addr.isBit {
 		bitOffset := int(p.addr.addr) - int(segStart)
-		if bitOffset < 0 || bitOffset/8 >= len(segData) {
+		if bitOffset < 0 || bitOffset+length > len(segData)*8 {
 			return nil, fmt.Errorf("位偏移越界")
 		}
-		bit := (segData[bitOffset/8] >> uint(bitOffset%8)) & 0x01
-		if p.info.base == "byte" {
-			return byte(bit), nil
+		if length == 1 {
+			bit := (segData[bitOffset/8] >> uint(bitOffset%8)) & 0x01
+			if p.info.base == "byte" {
+				return byte(bit), nil
+			}
+			return bit == 1, nil
 		}
-		return bit == 1, nil
+		// 多位 → 数组
+		if p.info.base == "byte" {
+			out := make([]byte, length)
+			for i := 0; i < length; i++ {
+				out[i] = (segData[(bitOffset+i)/8] >> uint((bitOffset+i)%8)) & 0x01
+			}
+			return out, nil
+		}
+		out := make([]bool, length)
+		for i := 0; i < length; i++ {
+			out[i] = (segData[(bitOffset+i)/8]>>uint((bitOffset+i)%8))&0x01 == 1
+		}
+		return out, nil
 	}
 
 	// 寄存器访问
@@ -330,36 +417,7 @@ func decodePoint(p pointPlan, segData []byte, segStart uint16, isBitSeg bool) (i
 	}
 	regs := segData[start : start+rc*2] // 线路字节
 
-	switch p.info.base {
-	case "byte":
-		return regs[1], nil // 低字节（与 delta readByte results[0]&0xFF 一致）
-	case "int16":
-		return int16(binary.BigEndian.Uint16(regs)), nil
-	case "uint16":
-		return binary.BigEndian.Uint16(regs), nil
-	case "int32":
-		b := reorderBytes(regs, p.info.order)
-		return int32(binary.BigEndian.Uint32(b)), nil
-	case "uint32":
-		b := reorderBytes(regs, p.info.order)
-		return binary.BigEndian.Uint32(b), nil
-	case "float32":
-		b := reorderBytes(regs, p.info.order)
-		return math.Float32frombits(binary.BigEndian.Uint32(b)), nil
-	case "int64":
-		b := reorderBytes(regs, p.info.order)
-		return int64(binary.BigEndian.Uint64(b)), nil
-	case "uint64":
-		b := reorderBytes(regs, p.info.order)
-		return binary.BigEndian.Uint64(b), nil
-	case "float64":
-		b := reorderBytes(regs, p.info.order)
-		return math.Float64frombits(binary.BigEndian.Uint64(b)), nil
-	case "string":
-		length := p.pt.Count
-		if length <= 0 {
-			length = 1
-		}
+	if p.info.base == "string" {
 		out := make([]byte, len(regs))
 		copy(out, regs)
 		if len(out) > length {
@@ -367,7 +425,53 @@ func decodePoint(p pointPlan, segData []byte, segStart uint16, isBitSeg bool) (i
 		}
 		return strings.TrimRight(string(out), "\x00"), nil
 	}
-	return nil, fmt.Errorf("不支持的数据类型: %s", p.info.base)
+
+	// 单元素直接返回；多元素按单类型寄存器宽度切分数组
+	if length == 1 {
+		return decodeScalar(p.info, regs)
+	}
+	elemRegs := int(p.info.regCount)
+	values := make([]interface{}, 0, length)
+	for i := 0; i < length; i++ {
+		chunk := regs[i*elemRegs*2 : (i+1)*elemRegs*2]
+		v, err := decodeScalar(p.info, chunk)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, nil
+}
+
+// decodeScalar 解析单个标量值（regs 为该元素的线路字节，长度=regCount*2）
+func decodeScalar(info dataTypeInfo, regs []byte) (interface{}, error) {
+	switch info.base {
+	case "byte":
+		return regs[1], nil // 低字节（与 delta readByte results[0]&0xFF 一致）
+	case "int16":
+		return int16(binary.BigEndian.Uint16(regs)), nil
+	case "uint16":
+		return binary.BigEndian.Uint16(regs), nil
+	case "int32":
+		b := reorderBytes(regs, info.order)
+		return int32(binary.BigEndian.Uint32(b)), nil
+	case "uint32":
+		b := reorderBytes(regs, info.order)
+		return binary.BigEndian.Uint32(b), nil
+	case "float32":
+		b := reorderBytes(regs, info.order)
+		return math.Float32frombits(binary.BigEndian.Uint32(b)), nil
+	case "int64":
+		b := reorderBytes(regs, info.order)
+		return int64(binary.BigEndian.Uint64(b)), nil
+	case "uint64":
+		b := reorderBytes(regs, info.order)
+		return binary.BigEndian.Uint64(b), nil
+	case "float64":
+		b := reorderBytes(regs, info.order)
+		return math.Float64frombits(binary.BigEndian.Uint64(b)), nil
+	}
+	return nil, fmt.Errorf("不支持的数据类型: %s", info.base)
 }
 
 // encodePoint 将写入值编码为寄存器序列（保持寄存器）或位字节（线圈）

@@ -6,14 +6,14 @@ package modbusrtu
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"edge5/internal/core/protocol"
 	"edge5/internal/core/protocol/builtin"
 
-	"github.com/goburrow/serial"
-	modbus "github.com/thinkgos/gomodbus/v2"
 	"go.uber.org/zap"
 )
 
@@ -26,9 +26,9 @@ func init() {
 // ModbusRTUService Modbus RTU 串口协议服务
 type ModbusRTUService struct {
 	lock      sync.Mutex
-	Clients   map[uint]modbus.Client // deviceID -> client
-	Providers map[uint]modbus.ClientProvider
-	SlaveIDs  map[uint]byte // deviceID -> 站号（连接参数）
+	Clients   map[uint]*rtuMaster    // deviceID -> RTU 主站
+	SlaveIDs  map[uint]byte          // deviceID -> 站号（连接参数）
+	Timeouts  map[uint]time.Duration // deviceID -> 读响应超时（连接参数）
 	connected bool
 	deviceID  uint
 	portMap   map[uint]string // deviceID -> 串口（用于 Release）
@@ -37,10 +37,10 @@ type ModbusRTUService struct {
 // NewModbusRTUService 创建服务
 func NewModbusRTUService() *ModbusRTUService {
 	return &ModbusRTUService{
-		Clients:   make(map[uint]modbus.Client),
-		Providers: make(map[uint]modbus.ClientProvider),
-		SlaveIDs:  make(map[uint]byte),
-		portMap:   make(map[uint]string),
+		Clients:  make(map[uint]*rtuMaster),
+		SlaveIDs: make(map[uint]byte),
+		Timeouts: make(map[uint]time.Duration),
+		portMap:  make(map[uint]string),
 	}
 }
 
@@ -66,9 +66,10 @@ func (m *ModbusRTUService) Info() protocol.Metadata {
 			protocol.Metadata{"name": "parity", "cName": "校验位", "type": "select", "required": true, "default": "N", "choices": []string{"N", "E", "O"}},
 			protocol.Metadata{"name": "stop_bits", "cName": "停止位", "type": "select", "required": true, "default": "1", "choices": []string{"1", "2"}},
 			protocol.Metadata{"name": "slave_id", "cName": "站号", "type": "number", "required": true, "default": "1"},
+			protocol.Metadata{"name": "response_timeout", "cName": "响应超时(ms)", "type": "number", "required": false, "default": "2000"},
 		},
 		"readParamsSchema": []any{
-			protocol.Metadata{"name": "address", "cName": "地址", "type": "string", "required": true, "default": ""},
+			protocol.Metadata{"name": "address", "cName": "地址", "type": "string", "required": true, "default": "", "placeholder": "十进制 600/40600；十六进制 0x3A、3Ah（0-based线地址）"},
 			protocol.Metadata{"name": "length", "cName": "长度", "type": "int", "required": false, "default": "1"},
 			protocol.Metadata{"name": "parseType", "cName": "解析类型", "type": "select", "required": true, "default": "uint16", "choices": []string{
 				"bool", "byte", "int16", "uint16", "int32", "uint32", "int64", "uint64", "float32", "float64", "string",
@@ -110,7 +111,7 @@ func (m *ModbusRTUService) Connect(ctx context.Context, params protocol.Metadata
 	dataBits := builtin.GetInt(params, "data_bits")
 	parity := builtin.GetString(params, "parity")
 	stopBits := builtin.GetInt(params, "stop_bits")
-	slaveID := byte(builtin.GetInt(params, "slave_id"))
+	slaveID := parseSlaveID(params)
 
 	if port == "" {
 		return protocol.InvalidHandle, fmt.Errorf("缺少串口参数")
@@ -130,6 +131,14 @@ func (m *ModbusRTUService) Connect(ctx context.Context, params protocol.Metadata
 	if slaveID == 0 {
 		slaveID = 1
 	}
+	// 读响应超时：连接参数可配（毫秒），默认 2000ms。
+	// Windows 下 serial.Config.Timeout=0 会使 ReadFile 永久阻塞，
+	// 从站不响应时 context 超时对 syscall 无效，必须设置。
+	timeoutMs := builtin.GetInt(params, "response_timeout")
+	if timeoutMs < 100 {
+		timeoutMs = 2000
+	}
+	readTimeout := time.Duration(timeoutMs) * time.Millisecond
 
 	// 串口占用管理
 	if builtin.SerialManager != nil {
@@ -138,27 +147,20 @@ func (m *ModbusRTUService) Connect(ctx context.Context, params protocol.Metadata
 		}
 	}
 
-	provider := modbus.NewRTUClientProvider(
-		modbus.WithSerialConfig(serial.Config{
-			Address:  port,
-			BaudRate: baudRate,
-			DataBits: dataBits,
-			StopBits: stopBits,
-			Parity:   parity,
-		}),
-	)
-	client := modbus.NewClient(provider)
-
-	if err := client.Connect(); err != nil {
+	// 自管串口：Windows 下显式使能 RTS/DTR（部分 RS485 转换器需要 RTS 高电平
+	// 才能接收），非 Windows 使用 termios CLOCAL 模式。
+	sp, err := openRTUSerial(port, baudRate, dataBits, stopBits, parity, readTimeout)
+	if err != nil {
 		if builtin.SerialManager != nil {
 			builtin.SerialManager.Release(port)
 		}
-		return protocol.InvalidHandle, fmt.Errorf("连接失败: %w", err)
+		return protocol.InvalidHandle, fmt.Errorf("打开串口失败: %w", err)
 	}
+	client := &rtuMaster{port: sp, baudRate: baudRate}
 
 	m.Clients[deviceID] = client
-	m.Providers[deviceID] = provider
 	m.SlaveIDs[deviceID] = slaveID
+	m.Timeouts[deviceID] = readTimeout
 	m.portMap[deviceID] = port
 	m.connected = true
 	m.deviceID = deviceID
@@ -168,7 +170,11 @@ func (m *ModbusRTUService) Connect(ctx context.Context, params protocol.Metadata
 			zap.Uint("deviceID", deviceID),
 			zap.String("port", port),
 			zap.Int("baudRate", baudRate),
+			zap.Int("dataBits", dataBits),
+			zap.String("parity", parity),
+			zap.Int("stopBits", stopBits),
 			zap.Uint8("slaveID", slaveID),
+			zap.Duration("timeout", readTimeout),
 		)
 	}
 	return protocol.DeviceHandle(deviceID), nil
@@ -187,8 +193,8 @@ func (m *ModbusRTUService) Disconnect(ctx context.Context, handle protocol.Devic
 	if client, ok := m.Clients[devID]; ok {
 		client.Close()
 		delete(m.Clients, devID)
-		delete(m.Providers, devID)
 		delete(m.SlaveIDs, devID)
+		delete(m.Timeouts, devID)
 	}
 
 	if port, ok := m.portMap[devID]; ok {
@@ -241,11 +247,29 @@ func (m *ModbusRTUService) ReadBatch(ctx context.Context, handle protocol.Device
 		return nil, err
 	}
 
+	// 调试帧抓取：Options 中带 FrameCapture 时，记录每段底层收发帧
+	capture, _ := req.Options[protocol.FrameCaptureKey].(*protocol.FrameCapture)
+
 	results := make([]protocol.BatchReadResult, len(req.Points))
 	for _, seg := range segments {
+		wireCode := wireFuncCode(seg.code)
+		if capture != nil {
+			group := capture.BeginGroup(protocol.Metadata{
+				"op":       "read",
+				"slaveID":  slaveID,
+				"code":     wireCode,
+				"funcName": funcCodeName(wireCode),
+				"start":    seg.start,
+				"count":    seg.count,
+				"isBit":    seg.isBit,
+			})
+			client.setFrameHook(group)
+		}
 		segData, err := readSegmentData(client, slaveID, seg)
+		client.setFrameHook(nil)
 		if err != nil {
 			// 段级错误隔离：仅本段点位 quality=bad
+			err = wrapTimeoutErr(err, m.portMap[devID], slaveID, m.Timeouts[devID], wireCode, seg.start, seg.count)
 			for _, p := range seg.points {
 				results[p.index] = protocol.BatchReadResult{
 					PointName: p.pt.Resource,
@@ -255,7 +279,7 @@ func (m *ModbusRTUService) ReadBatch(ctx context.Context, handle protocol.Device
 			}
 			if builtin.Logger != nil {
 				builtin.Logger.Warn("Modbus-RTU 段读取失败",
-					zap.Uint8("code", seg.code),
+					zap.Uint8("code", wireCode),
 					zap.Uint16("start", seg.start),
 					zap.Uint16("count", seg.count),
 					zap.Error(err))
@@ -301,28 +325,105 @@ func (m *ModbusRTUService) WriteBatch(ctx context.Context, handle protocol.Devic
 		return err
 	}
 
+	// 调试帧抓取
+	capture, _ := req.Options[protocol.FrameCaptureKey].(*protocol.FrameCapture)
+
 	for _, seg := range segments {
+		var code byte
+		var count uint16
 		if seg.isBit {
 			if len(seg.bits) == 1 {
-				if err := client.WriteSingleCoil(slaveID, seg.start, seg.bits[0] != 0); err != nil {
-					return fmt.Errorf("写入线圈 %d 失败: %w", seg.start, err)
-				}
+				code, count = 5, 1
 			} else {
-				if err := client.WriteMultipleCoils(slaveID, seg.start, uint16(len(seg.bits)), seg.bits); err != nil {
-					return fmt.Errorf("批量写入线圈 %d 失败: %w", seg.start, err)
-				}
+				code, count = 15, uint16(len(seg.bits))
 			}
 		} else {
 			if len(seg.regs) == 1 {
-				if err := client.WriteSingleRegister(slaveID, seg.start, seg.regs[0]); err != nil {
-					return fmt.Errorf("写入寄存器 %d 失败: %w", seg.start, err)
-				}
+				code, count = 6, 1
 			} else {
-				if err := client.WriteMultipleRegisters(slaveID, seg.start, uint16(len(seg.regs)), seg.regs); err != nil {
-					return fmt.Errorf("批量写入寄存器 %d 失败: %w", seg.start, err)
-				}
+				code, count = 16, uint16(len(seg.regs))
 			}
+		}
+
+		if capture != nil {
+			group := capture.BeginGroup(protocol.Metadata{
+				"op":       "write",
+				"slaveID":  slaveID,
+				"code":     code,
+				"funcName": funcCodeName(code),
+				"start":    seg.start,
+				"count":    count,
+				"isBit":    seg.isBit,
+			})
+			client.setFrameHook(group)
+		}
+
+		var werr error
+		if seg.isBit {
+			if code == 5 {
+				werr = client.WriteSingleCoil(slaveID, seg.start, seg.bits[0] != 0)
+			} else {
+				werr = client.WriteMultipleCoils(slaveID, seg.start, count, seg.bits)
+			}
+		} else {
+			if code == 6 {
+				werr = client.WriteSingleRegister(slaveID, seg.start, seg.regs[0])
+			} else {
+				werr = client.WriteMultipleRegisters(slaveID, seg.start, count, seg.regs)
+			}
+		}
+		client.setFrameHook(nil)
+		if werr != nil {
+			return fmt.Errorf("写入失败(地址=0x%04X): %w", seg.start,
+				wrapTimeoutErr(werr, m.portMap[devID], slaveID, m.Timeouts[devID], code, seg.start, count))
 		}
 	}
 	return nil
+}
+
+// wrapTimeoutErr 把串口无响应超时包装为带排查指引的错误，其他错误原样返回。
+// errSerialTimeout 表示请求帧已成功写入串口、但在设定时间内未收到任何返回字节。
+func wrapTimeoutErr(err error, port string, slaveID byte, timeout time.Duration, code byte, start, count uint16) error {
+	if !errors.Is(err, errSerialTimeout) {
+		return err
+	}
+	return fmt.Errorf("设备无响应，等待 %s 未收到任何返回字节（串口=%s 站号=0x%02X(%d) 功能码=0x%02X %s 起始地址=0x%04X 数量=0x%04X(%d)）。"+
+		"排查：①波特率/数据位/校验位/停止位是否与设备一致；②站号是否正确；③RS485 A/B是否接反、设备是否上电；"+
+		"④完整发送帧HEX见界面“通信报文”区，确认对端是否收到（USB转换器TX灯是否闪烁）；⑤设备响应慢可调大连接参数“响应超时(ms)”(当前 %dms)",
+		timeout, port, slaveID, slaveID, code, funcCodeName(code), start, count, count, timeout.Milliseconds())
+}
+
+// wireFuncCode 内部分区码转为线路 Modbus 功能码：
+// 1=线圈→FC1, 2=离散输入→FC2, 3=输入寄存器→FC4, 4=保持寄存器→FC3
+func wireFuncCode(internalCode byte) byte {
+	switch internalCode {
+	case 3:
+		return fcReadInputRegisters
+	case 4:
+		return fcReadHoldingRegisters
+	}
+	return internalCode
+}
+
+// funcCodeName 功能码中文名（用于错误信息）
+func funcCodeName(code byte) string {
+	switch code {
+	case 1:
+		return "读线圈FC1"
+	case 2:
+		return "读离散输入FC2"
+	case 3:
+		return "读保持寄存器FC3"
+	case 4:
+		return "读输入寄存器FC4"
+	case 5:
+		return "写单线圈FC5"
+	case 6:
+		return "写单寄存器FC6"
+	case 15:
+		return "写多线圈FC15"
+	case 16:
+		return "写多寄存器FC16"
+	}
+	return "未知"
 }

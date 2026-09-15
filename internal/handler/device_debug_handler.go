@@ -72,7 +72,7 @@ func (h *DeviceDebugHandler) DebugRead(c *gin.Context) {
 		return
 	}
 
-	result, err := h.doRead(deviceID, req.Params)
+	result, frames, err := h.doRead(deviceID, req.Params)
 	if err != nil {
 		response.Error(c, response.CodeError, "读取失败: "+err.Error())
 		return
@@ -80,6 +80,7 @@ func (h *DeviceDebugHandler) DebugRead(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"results": result,
+		"frames":  frames,
 	})
 }
 
@@ -103,7 +104,7 @@ func (h *DeviceDebugHandler) DebugWrite(c *gin.Context) {
 		return
 	}
 
-	err = h.doWrite(deviceID, req.Params)
+	frames, err := h.doWrite(deviceID, req.Params)
 	if err != nil {
 		response.Error(c, response.CodeError, "写入失败: "+err.Error())
 		return
@@ -111,6 +112,7 @@ func (h *DeviceDebugHandler) DebugWrite(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"message": "写入成功",
+		"frames":  frames,
 	})
 }
 
@@ -199,24 +201,24 @@ func (h *DeviceDebugHandler) GetDeviceDebugInfo(c *gin.Context) {
 	})
 }
 
-func (h *DeviceDebugHandler) doRead(deviceID uint64, params []DebugReadParam) ([]map[string]interface{}, error) {
+func (h *DeviceDebugHandler) doRead(deviceID uint64, params []DebugReadParam) ([]map[string]interface{}, []map[string]interface{}, error) {
 	// 获取设备信息
 	var device model.Device
 	if err := global.DB.First(&device, deviceID).Error; err != nil {
-		return nil, fmt.Errorf("设备不存在")
+		return nil, nil, fmt.Errorf("设备不存在")
 	}
 
 	// 获取协议实例
 	reg := protocol.DefaultRegistry()
 	proto, ok := reg.Get(device.Protocol)
 	if !ok {
-		return nil, fmt.Errorf("协议 %s 未注册", device.Protocol)
+		return nil, nil, fmt.Errorf("协议 %s 未注册", device.Protocol)
 	}
 
 	// 解析设备配置参数用于连接
 	connParams, err := parseDeviceConfigToMetadata(&device)
 	if err != nil {
-		return nil, fmt.Errorf("解析设备配置失败: %w", err)
+		return nil, nil, fmt.Errorf("解析设备配置失败: %w", err)
 	}
 	connParams["deviceID"] = float64(device.ID)
 
@@ -234,7 +236,12 @@ func (h *DeviceDebugHandler) doRead(deviceID uint64, params []DebugReadParam) ([
 			Count:    count,
 		})
 	}
-	readReq := protocol.BatchReadRequest{Points: points}
+	// 帧抓取器：协议实现把底层收发帧写入，随响应回传前端展示
+	capture := protocol.NewFrameCapture()
+	readReq := protocol.BatchReadRequest{
+		Points:  points,
+		Options: protocol.Metadata{protocol.FrameCaptureKey: capture},
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -247,15 +254,16 @@ func (h *DeviceDebugHandler) doRead(deviceID uint64, params []DebugReadParam) ([
 		var connErr error
 		handle, connErr = proto.Connect(ctx, connParams)
 		if connErr != nil {
-			return nil, fmt.Errorf("连接设备失败: %w", connErr)
+			return nil, buildDebugFrames(capture), fmt.Errorf("连接设备失败: %w", connErr)
 		}
 		defer func() {
 			_ = proto.Disconnect(context.Background(), handle)
 		}()
 	}
 	resp, err := proto.ReadBatch(ctx, handle, readReq)
+	frames := buildDebugFrames(capture)
 	if err != nil {
-		return nil, err
+		return nil, frames, err
 	}
 
 	results := make([]map[string]interface{}, 0, len(resp.Results))
@@ -271,24 +279,24 @@ func (h *DeviceDebugHandler) doRead(deviceID uint64, params []DebugReadParam) ([
 		results = append(results, item)
 	}
 
-	return results, nil
+	return results, frames, nil
 }
 
-func (h *DeviceDebugHandler) doWrite(deviceID uint64, params []DebugWriteParam) error {
+func (h *DeviceDebugHandler) doWrite(deviceID uint64, params []DebugWriteParam) ([]map[string]interface{}, error) {
 	var device model.Device
 	if err := global.DB.First(&device, deviceID).Error; err != nil {
-		return fmt.Errorf("设备不存在")
+		return nil, fmt.Errorf("设备不存在")
 	}
 
 	reg := protocol.DefaultRegistry()
 	proto, ok := reg.Get(device.Protocol)
 	if !ok {
-		return fmt.Errorf("协议 %s 未注册", device.Protocol)
+		return nil, fmt.Errorf("协议 %s 未注册", device.Protocol)
 	}
 
 	connParams, err := parseDeviceConfigToMetadata(&device)
 	if err != nil {
-		return fmt.Errorf("解析设备配置失败: %w", err)
+		return nil, fmt.Errorf("解析设备配置失败: %w", err)
 	}
 	connParams["deviceID"] = float64(device.ID)
 
@@ -308,7 +316,11 @@ func (h *DeviceDebugHandler) doWrite(deviceID uint64, params []DebugWriteParam) 
 			Value: p.WriteValue,
 		})
 	}
-	writeReq := protocol.BatchWriteRequest{Items: items}
+	capture := protocol.NewFrameCapture()
+	writeReq := protocol.BatchWriteRequest{
+		Items:   items,
+		Options: protocol.Metadata{protocol.FrameCaptureKey: capture},
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -321,16 +333,83 @@ func (h *DeviceDebugHandler) doWrite(deviceID uint64, params []DebugWriteParam) 
 		var connErr error
 		handle, connErr = proto.Connect(ctx, connParams)
 		if connErr != nil {
-			return fmt.Errorf("连接设备失败: %w", connErr)
+			return buildDebugFrames(capture), fmt.Errorf("连接设备失败: %w", connErr)
 		}
 		defer func() {
 			_ = proto.Disconnect(context.Background(), handle)
 		}()
 	}
 	if err := proto.WriteBatch(ctx, handle, writeReq); err != nil {
-		return err
+		return buildDebugFrames(capture), err
 	}
-	return nil
+	return buildDebugFrames(capture), nil
+}
+
+// buildDebugFrames 把帧抓取器内容整理为前端友好的结构
+func buildDebugFrames(capture *protocol.FrameCapture) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0)
+	if capture == nil {
+		return out
+	}
+	for _, g := range capture.Groups() {
+		var tx, rx string
+		for _, f := range g.Frames {
+			switch f.Direction {
+			case protocol.FrameDirectionTX:
+				tx = f.Hex
+			case protocol.FrameDirectionRX:
+				rx = f.Hex
+			}
+		}
+		m := g.Meta
+		slave := metaByte(m, "slaveID")
+		code := metaByte(m, "code")
+		addr := metaU16(m, "start")
+		cnt := metaU16(m, "count")
+		out = append(out, map[string]interface{}{
+			"op":         metaStr(m, "op"),
+			"slaveId":    int(slave),
+			"slaveHex":   fmt.Sprintf("0x%02X", slave),
+			"funcCode":   int(code),
+			"funcHex":    fmt.Sprintf("0x%02X", code),
+			"funcName":   metaStr(m, "funcName"),
+			"address":    addr,
+			"addressHex": fmt.Sprintf("0x%04X", addr),
+			"count":      cnt,
+			"countHex":   fmt.Sprintf("0x%04X", cnt),
+			"tx":         tx,
+			"rx":         rx,
+			"timeout":    tx != "" && rx == "", // 有下发无接收即超时/无响应
+		})
+	}
+	return out
+}
+
+func metaStr(m protocol.Metadata, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func metaByte(m protocol.Metadata, key string) byte {
+	switch v := m[key].(type) {
+	case byte:
+		return v
+	case int:
+		return byte(v)
+	}
+	return 0
+}
+
+func metaU16(m protocol.Metadata, key string) uint16 {
+	switch v := m[key].(type) {
+	case uint16:
+		return v
+	case int:
+		return uint16(v)
+	}
+	return 0
 }
 
 // parseDeviceConfigToMetadata 解析设备配置为协议 Metadata

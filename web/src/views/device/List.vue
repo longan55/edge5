@@ -288,7 +288,7 @@
               >
                 <template #default="{ row }">
                   <!-- 字符串类型 -->
-                  <el-input v-if="col.type === 'string'" v-model="row[col.name]" :placeholder="col.cName" />
+                  <el-input v-if="col.type === 'string'" v-model="row[col.name]" :placeholder="col.placeholder || col.cName" />
                   <!-- 整数类型 -->
                   <el-input-number v-else-if="col.type === 'int'" v-model="row[col.name]" :min="0" :max="10000" />
                   <!-- 选择类型 -->
@@ -296,7 +296,7 @@
                     <el-option v-for="opt in col.choices" :key="opt" :label="opt" :value="opt" />
                   </el-select>
                   <!-- 其他类型 -->
-                  <el-input v-else v-model="row[col.name]" :placeholder="col.cName" />
+                  <el-input v-else v-model="row[col.name]" :placeholder="col.placeholder || col.cName" />
                 </template>
               </el-table-column>
               <!-- 固定列：读取结果 -->
@@ -318,6 +318,33 @@
                 </template>
               </el-table-column>
             </el-table>
+          </div>
+
+          <!-- 底层通信报文（十六进制） -->
+          <div v-if="debugFrames.length" class="frame-panel">
+            <div class="frame-panel-header">
+              <h4 style="margin: 0;">通信报文（HEX）</h4>
+              <span class="frame-tip">报文均为 16 进制（含站号、功能码、CRC）；连续地址合并为一次通信</span>
+            </div>
+            <div v-for="(f, i) in debugFrames" :key="i" class="frame-item">
+              <div class="frame-meta">
+                <el-tag size="small" :type="f.op === 'write' ? 'warning' : 'primary'">
+                  {{ f.op === 'write' ? '写入' : '读取' }}
+                </el-tag>
+                <span class="frame-meta-text">
+                  站号 {{ f.slaveHex }}({{ f.slaveId }}) · 功能码 {{ f.funcHex }}({{ f.funcCode }}) · 地址 {{ f.addressHex }}({{ f.address }}) · 数量 {{ f.countHex }}({{ f.count }})
+                </span>
+                <el-tag v-if="f.timeout" size="small" type="danger">无响应/超时</el-tag>
+              </div>
+              <div class="frame-line frame-tx">
+                <span class="frame-dir">下发 TX</span>
+                <code>{{ f.tx || '-' }}</code>
+              </div>
+              <div class="frame-line frame-rx" :class="{ 'frame-timeout': !f.rx }">
+                <span class="frame-dir">接收 RX</span>
+                <code>{{ f.rx || '未收到任何返回字节' }}</code>
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -870,12 +897,16 @@ const debugSchemaColumns = computed(() => {
 })
 
 const debugParams = ref([])
+const debugFrames = ref([]) // 底层收发帧（HEX）
 const isLoopReading = ref(false)
 const loopInterval = ref(1000)
 const lastReadTime = ref('')
 const paramTypes = ['int', 'float', 'string', 'bool']
 const importFileInput = ref(null)
 let loopTimer = null
+
+// 功能码补两位十六进制
+const padHex = (n) => Number(n || 0).toString(16).toUpperCase().padStart(2, '0')
 
 const handleDebug = async (row) => {
   debugDeviceId.value = row.id
@@ -889,6 +920,7 @@ const handleDebugDialogOpened = async () => {
 
   debugLoading.value = true
   debugParams.value = []
+  debugFrames.value = []
   debugInfo.protocol = ''
   debugInfo.readParamsSchema = []
   isLoopReading.value = false
@@ -978,6 +1010,8 @@ const handleDebugRead = async () => {
           debugParams.value[i]._quality = r.quality
         }
       }
+      // 底层收发帧（HEX），随每次读取刷新
+      debugFrames.value = res.data?.frames || []
       lastReadTime.value = new Date().toLocaleTimeString()
 
       // 如果循环读取，继续
@@ -1018,7 +1052,9 @@ const handleDebugWrite = async () => {
   }
 
   try {
-    await request.post(`/device/${debugDeviceId.value}/debug/write`, { params: writeParams })
+    const res = await request.post(`/device/${debugDeviceId.value}/debug/write`, { params: writeParams })
+    // 展示写入交互的底层收发帧（HEX）
+    debugFrames.value = res.data?.frames || []
     ElMessage.success('写入成功')
   } catch (e) {
     console.error('写入失败:', e)
@@ -1127,5 +1163,86 @@ onMounted(() => {
 
 .params-table {
   width: 100%;
+}
+
+/* 通信报文区 */
+.frame-panel {
+  margin-top: 14px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.frame-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.frame-tip {
+  color: #909399;
+  font-size: 12px;
+}
+
+.frame-item {
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #fafafa;
+}
+
+.frame-item:last-child {
+  margin-bottom: 0;
+}
+
+.frame-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.frame-meta-text {
+  color: #606266;
+  font-size: 12px;
+}
+
+.frame-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.8;
+  font-size: 13px;
+}
+
+.frame-dir {
+  flex-shrink: 0;
+  width: 70px;
+  font-weight: 600;
+}
+
+.frame-tx .frame-dir {
+  color: #409eff;
+}
+
+.frame-rx .frame-dir {
+  color: #67c23a;
+}
+
+.frame-rx.frame-timeout .frame-dir {
+  color: #f56c6c;
+}
+
+.frame-line code {
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.frame-timeout code {
+  color: #f56c6c;
 }
 </style>
