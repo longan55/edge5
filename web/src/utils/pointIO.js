@@ -3,7 +3,8 @@ const INTERNAL_FIELDS = ['_result', '_writeValue', '_quality']
 const FIELD_ALIASES = {
   address: ['address', 'addr', 'point', 'tag', 'tagname', 'tag_name', 'plc_address'],
   offset: ['offset', 'offset_value', 'byte_offset', 'bit_offset', 'offs'],
-  parseType: ['parseType', 'parsetype', 'dataType', 'datatype', 'type', 'data_type', 'parse_type']
+  parseType: ['parseType', 'parsetype', 'dataType', 'datatype', 'type', 'data_type', 'parse_type'],
+  expr: ['expr', 'expression', 'formula', 'calc']
 }
 
 function findValue(point, fieldName) {

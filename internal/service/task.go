@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
 
 	"edge5/global"
 	"edge5/internal/core/cache"
+	"edge5/internal/core/expr"
 	"edge5/internal/core/protocol"
 	"edge5/internal/model"
 	"edge5/internal/repository"
@@ -213,6 +215,8 @@ func (s *TaskScheduler) runTask(ctx context.Context, taskID uint64, task *model.
 
 	points := make([]protocol.Point, 0, len(task.Commands))
 	commandMap := make(map[string]model.TaskCommand)
+	// exprMap 按协议地址索引已编译的点位表达式（x=原始值）；空表达式不入表
+	exprMap := make(map[string]*expr.Program)
 	for _, cmd := range task.Commands {
 		points = append(points, protocol.Point{
 			Name:     cmd.Name,
@@ -220,6 +224,19 @@ func (s *TaskScheduler) runTask(ctx context.Context, taskID uint64, task *model.
 			DataType: cmd.ParseType,
 		})
 		commandMap[cmd.Address] = cmd
+		if src := strings.TrimSpace(cmd.Expr); src != "" {
+			prog, err := expr.CompileProgram(src, map[string]bool{"x": true})
+			if err != nil {
+				s.logger.Error("点位计算表达式无效，任务无法启动",
+					zap.Uint64("taskID", taskID),
+					zap.String("point", cmd.Name),
+					zap.String("address", cmd.Address),
+					zap.String("expr", src),
+					zap.Error(err))
+				return
+			}
+			exprMap[cmd.Address] = prog
+		}
 	}
 
 	reconnectTicker := time.NewTicker(30 * time.Second)
@@ -268,7 +285,7 @@ func (s *TaskScheduler) runTask(ctx context.Context, taskID uint64, task *model.
 					s.logger.Info("任务协程退出", zap.Uint64("taskID", taskID))
 					return
 				case <-ticker.C:
-					s.executeRead(ctx, taskID, task, device, proto, handle, points, commandMap)
+					s.executeRead(ctx, taskID, task, device, proto, handle, points, commandMap, exprMap)
 				}
 			}
 		}()
@@ -303,7 +320,7 @@ func (s *TaskScheduler) updateDeviceStatus(deviceID uint64, online bool, message
 	}
 }
 
-func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *model.Task, device *model.Device, proto protocol.DeviceCommProtocol, handle protocol.DeviceHandle, points []protocol.Point, commandMap map[string]model.TaskCommand) {
+func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *model.Task, device *model.Device, proto protocol.DeviceCommProtocol, handle protocol.DeviceHandle, points []protocol.Point, commandMap map[string]model.TaskCommand, exprMap map[string]*expr.Program) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("executeRead 发生 panic", zap.Uint64("taskID", taskID), zap.Any("panic", r))
@@ -323,13 +340,44 @@ func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *mo
 
 	dataMap := make(map[string]interface{})
 	for _, result := range resp.Results {
-		if cmd, ok := commandMap[result.PointName]; ok {
-			if result.Quality == "good" || result.Quality == "" {
-				dataMap[cmd.Name] = result.Value
+		cmd, ok := commandMap[result.PointName]
+		if !ok {
+			continue
+		}
+		if result.Quality != "good" && result.Quality != "" {
+			s.logger.Warn("数据质量异常", zap.Uint64("taskID", taskID), zap.String("point", result.PointName), zap.String("quality", result.Quality), zap.Error(result.Error))
+			continue
+		}
+
+		value := result.Value
+		// 应用点位计算表达式（x=原始值）；非数值类型或求值失败时回退为原始值
+		if prog, hasExpr := exprMap[result.PointName]; hasExpr {
+			if raw, ok := edgeToFloat(result.Value); ok {
+				computed, evalErr := prog.Eval(map[string]float64{"x": raw})
+				if evalErr != nil {
+					s.logger.Warn("点位表达式计算失败，上报原始值",
+						zap.Uint64("taskID", taskID),
+						zap.String("point", cmd.Name),
+						zap.String("expr", cmd.Expr),
+						zap.Float64("x", raw),
+						zap.Error(evalErr))
+				} else {
+					s.logger.Debug("点位表达式计算",
+						zap.Uint64("taskID", taskID),
+						zap.String("point", cmd.Name),
+						zap.Float64("raw", raw),
+						zap.String("expr", cmd.Expr),
+						zap.Float64("result", computed))
+					value = computed
+				}
 			} else {
-				s.logger.Warn("数据质量异常", zap.Uint64("taskID", taskID), zap.String("point", result.PointName), zap.String("quality", result.Quality), zap.Error(result.Error))
+				s.logger.Warn("点位表达式仅支持数值类型，上报原始值",
+					zap.Uint64("taskID", taskID),
+					zap.String("point", cmd.Name),
+					zap.String("parseType", cmd.ParseType))
 			}
 		}
+		dataMap[cmd.Name] = value
 	}
 
 	if len(dataMap) == 0 {

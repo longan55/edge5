@@ -215,13 +215,15 @@ type DeviceService struct {
 	deviceRepo       *repository.DeviceRepository
 	deviceStatusRepo *repository.DeviceStatusRepository
 	taskRepo         *repository.TaskRepository
+	edgeTaskRepo     *repository.EdgeTaskRepository
 }
 
-func NewDeviceService(deviceRepo *repository.DeviceRepository, deviceStatusRepo *repository.DeviceStatusRepository, taskRepo *repository.TaskRepository) *DeviceService {
+func NewDeviceService(deviceRepo *repository.DeviceRepository, deviceStatusRepo *repository.DeviceStatusRepository, taskRepo *repository.TaskRepository, edgeTaskRepo *repository.EdgeTaskRepository) *DeviceService {
 	return &DeviceService{
 		deviceRepo:       deviceRepo,
 		deviceStatusRepo: deviceStatusRepo,
 		taskRepo:         taskRepo,
+		edgeTaskRepo:     edgeTaskRepo,
 	}
 }
 
@@ -241,6 +243,15 @@ func (s *DeviceService) DeleteDevice(id uint64) error {
 		}
 		if len(tasks) > 0 {
 			return fmt.Errorf("设备存在绑定的任务，请先删除任务后再重试")
+		}
+	}
+	if s.edgeTaskRepo != nil {
+		edgeTasks, err := s.edgeTaskRepo.ListByDeviceID(id)
+		if err != nil {
+			return fmt.Errorf("检查边缘计算任务绑定失败: %w", err)
+		}
+		if len(edgeTasks) > 0 {
+			return fmt.Errorf("设备存在绑定的边缘计算任务，请先删除后再重试")
 		}
 	}
 	return s.deviceRepo.Delete(id)

@@ -32,6 +32,9 @@
                   <el-table-column label="地址" prop="address" width="120" />
                   <el-table-column label="偏移量" prop="offset" width="100" />
                   <el-table-column label="解析类型" prop="parseType" width="120" />
+                  <el-table-column label="表达式(x)" prop="expr" min-width="160" show-overflow-tooltip>
+                    <template #default="{ row: c }">{{ c.expr || '原值' }}</template>
+                  </el-table-column>
                 </el-table>
               </div>
               <div v-else style="padding: 10px; color: #999;">暂无采集参数</div>
@@ -138,6 +141,18 @@
                   <el-input v-else v-model="row[field.name]" :placeholder="field.cName" size="small" />
                 </template>
               </el-table-column>
+              <!-- 计算表达式（通用字段，不属于协议 schema）：x=原始值 -->
+              <el-table-column width="190">
+                <template #header>
+                  <span>表达式(x)</span>
+                  <el-tooltip placement="top" content="上报前计算，x 为读到的原始值，支持 + - * / 与括号，如 x*0.1、(x-4)*2.5+20；留空原值上报">
+                    <el-icon class="tip-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </template>
+                <template #default="{ row }">
+                  <el-input v-model="row.expr" placeholder="如 x*0.1，留空原值" size="small" />
+                </template>
+              </el-table-column>
               <el-table-column label="操作" width="80">
                 <template #default="{ $index }">
                   <el-button type="danger" size="small" @click="removeCommand($index)">删除</el-button>
@@ -191,6 +206,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import {
   createTask,
   updateTask,
@@ -236,6 +252,10 @@ const readParamsColumns = computed(() => {
     default: param.default
   }))
 })
+
+// 表达式是通用固定列（不属于协议 schema），导入导出时一并参与
+const exprColumn = { name: 'expr', cName: '表达式(x)', type: 'string' }
+const ioColumns = computed(() => [...readParamsColumns.value, exprColumn])
 
 const onSubmit = () => {
   page.value = 1
@@ -318,7 +338,8 @@ const rules = {
   deviceId: [{ required: true, message: '请选择设备', trigger: 'change' }]
 }
 
-const handleAdd = () => {
+const handleAdd = async () => {
+  await fetchDevices()
   dialogType.value = 'create'
   formData.value = {
     id: 0,
@@ -334,6 +355,7 @@ const handleAdd = () => {
 }
 
 const handleEdit = async (row) => {
+  await fetchDevices()
   dialogType.value = 'update'
   try {
     const res = await getTask(row.id)
@@ -346,7 +368,7 @@ const handleEdit = async (row) => {
         upTopic: task.upTopic,
         readInterval: task.readInterval,
         state: task.state,
-        commands: task.commands || []
+        commands: (task.commands || []).map(cmd => ({ ...cmd, expr: cmd.expr || '' }))
       }
       // 加载设备协议的采集参数 schema
       if (task.deviceId) {
@@ -400,6 +422,7 @@ const addCommand = () => {
       cmd[field.name] = ''
     }
   }
+  cmd.expr = '' // 计算表达式默认空（原值上报）
   formData.value.commands.push(cmd)
 }
 
@@ -412,7 +435,7 @@ const handleExportPoints = () => {
     ElMessage.warning('暂无点位数据')
     return
   }
-  const success = exportPoints(formData.value.commands, readParamsSchema.value, 'task_points.json')
+  const success = exportPoints(formData.value.commands, ioColumns.value, 'task_points.json')
   if (success) {
     ElMessage.success('导出成功')
   }
@@ -429,7 +452,7 @@ const handleFileChange = async (event) => {
   try {
     const importedData = await importPoints(file)
     
-    const { points, warnings } = validateAndMapPoints(importedData, readParamsColumns.value)
+    const { points, warnings } = validateAndMapPoints(importedData, ioColumns.value)
     
     const action = formData.value.commands.length > 0 ? 'append' : 'replace'
     
@@ -670,5 +693,12 @@ onUnmounted(() => {
 
 .params-table {
   width: 100%;
+}
+
+.tip-icon {
+  vertical-align: -2px;
+  color: #909399;
+  cursor: help;
+  margin-left: 2px;
 }
 </style>

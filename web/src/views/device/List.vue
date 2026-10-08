@@ -80,7 +80,7 @@
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="860px" destroy-on-close>
       <el-form :model="deviceForm" :rules="formRules" ref="formRef" label-width="120px">
         <el-form-item label="设备SN" prop="device_sn">
-          <el-input v-model="deviceForm.device_sn" :disabled="!!deviceForm.id" />
+          <el-input v-model="deviceForm.device_sn" placeholder="请输入设备SN" />
         </el-form-item>
 
         <el-form-item label="设备名称" prop="device_name">

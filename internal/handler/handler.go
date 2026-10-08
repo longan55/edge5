@@ -404,6 +404,7 @@ func (h *DeviceHandler) Update(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 
 	var req struct {
+		DeviceSn   string `json:"device_sn"`
 		DeviceName string `json:"device_name"`
 		Config     string `json:"config"`
 		Status     int8   `json:"status"`
@@ -420,6 +421,9 @@ func (h *DeviceHandler) Update(c *gin.Context) {
 		return
 	}
 
+	if req.DeviceSn != "" {
+		device.DeviceSn = req.DeviceSn
+	}
 	if req.DeviceName != "" {
 		device.DeviceName = req.DeviceName
 	}

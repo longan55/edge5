@@ -3,10 +3,12 @@ package handler
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"edge5/global"
-	"edge5/internal/model"
+	"edge5/internal/core/expr"
 	"edge5/internal/core/protocol"
+	"edge5/internal/model"
 	"edge5/internal/repository"
 	"edge5/internal/service"
 	"edge5/internal/utils/response"
@@ -30,10 +32,32 @@ func NewTaskHandler(dbLogger *zap.Logger) *TaskHandler {
 	return &TaskHandler{svc: svc}
 }
 
+// validateCommands 校验采集点位表达式：仅允许变量 x 与 + - * / ( ) 数字
+func validateCommands(cmds model.TaskCommands) error {
+	for i, cmd := range cmds {
+		src := strings.TrimSpace(cmd.Expr)
+		if src == "" {
+			continue
+		}
+		if _, err := expr.CompileAllowed(src, map[string]bool{"x": true}); err != nil {
+			name := cmd.Name
+			if name == "" {
+				name = fmt.Sprintf("第%d个点位", i+1)
+			}
+			return fmt.Errorf("点位 %s 的计算表达式无效: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (h *TaskHandler) CreateTask(c *gin.Context) {
 	var task model.Task
 	if err := c.ShouldBindJSON(&task); err != nil {
 		response.Error(c, response.CodeInvalidParam, "参数错误: "+err.Error())
+		return
+	}
+	if err := validateCommands(task.Commands); err != nil {
+		response.Error(c, response.CodeInvalidParam, err.Error())
 		return
 	}
 	if err := h.svc.Create(&task); err != nil {
@@ -47,6 +71,10 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	var task model.Task
 	if err := c.ShouldBindJSON(&task); err != nil {
 		response.Error(c, response.CodeInvalidParam, "参数错误: "+err.Error())
+		return
+	}
+	if err := validateCommands(task.Commands); err != nil {
+		response.Error(c, response.CodeInvalidParam, err.Error())
 		return
 	}
 	if err := h.svc.Update(&task); err != nil {

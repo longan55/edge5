@@ -4,21 +4,21 @@ import (
 	"context"
 	"edge5/config"
 	"edge5/global"
-	"edge5/internal/model"
 	"edge5/internal/core/cache"
 	"edge5/internal/core/connector"
 	"edge5/internal/core/protocol"
 	"edge5/internal/core/protocol/builtin"
 	_ "edge5/internal/core/protocol/builtin"
+	_ "edge5/internal/core/protocol/builtin/a1eprotocol"
 	_ "edge5/internal/core/protocol/builtin/delta"
 	_ "edge5/internal/core/protocol/builtin/inovance"
-	_ "edge5/internal/core/protocol/builtin/a1eprotocol"
 	_ "edge5/internal/core/protocol/builtin/mcprotocol"
 	_ "edge5/internal/core/protocol/builtin/melsecfx"
 	_ "edge5/internal/core/protocol/builtin/mitcncprotocol"
+	_ "edge5/internal/core/protocol/builtin/modbusrtu"
 	_ "edge5/internal/core/protocol/builtin/panasonic"
 	_ "edge5/internal/core/protocol/builtin/s7"
-	_ "edge5/internal/core/protocol/builtin/modbusrtu"
+	"edge5/internal/model"
 	"edge5/internal/repository"
 	"edge5/internal/router"
 	"edge5/internal/service"
@@ -32,6 +32,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var version = "v0.0.1_2609201642"
+
 func main() {
 	if err := run(); err != nil {
 		global.Logger.Fatal("程序启动失败", zap.Error(err))
@@ -42,6 +44,7 @@ func run() error {
 	config.InitConfig("")
 
 	global.InitLogger()
+	global.Logger.Info("Edge5 版本: %s", zap.String("version", version))
 	global.Logger.Info("Edge5 网关框架启动中...")
 
 	global.MyProcess = &global.Process{}
@@ -78,6 +81,9 @@ func run() error {
 			if scheduler != nil {
 				scheduler.FlushAllCache()
 			}
+			if edgeScheduler := service.GetEdgeTaskScheduler(); edgeScheduler != nil {
+				edgeScheduler.FlushAllCache()
+			}
 		})
 	}
 
@@ -90,6 +96,7 @@ func run() error {
 	r := router.SetupRouter(config.CONFIG.Server.Mode)
 
 	service.StartAllTasks()
+	service.StartAllEdgeTasks()
 
 	srv := &http.Server{
 		Addr:           fmt.Sprintf("%s:%d", config.CONFIG.Server.Host, config.CONFIG.Server.Port),
@@ -140,14 +147,23 @@ func autoMigrate() error {
 }
 
 func initDefaultTopics() {
-	var count int64
-	global.DB.Model(&model.MQTTTopicTemplate{}).Count(&count)
-	if count == 0 {
-		defaults := repository.GetDefaultTopics()
-		for _, t := range defaults {
-			global.DB.Create(t)
+	// 按 key 补插缺失的默认主题模板：新库全部插入，老库仅补齐新增 key（如 edge_data_up），
+	// 已存在（含用户已修改）的模板不覆盖，保证“默认支持且可在 MQTT 主题页面更新”。
+	defaults := repository.GetDefaultTopics()
+	inserted := 0
+	for _, t := range defaults {
+		var cnt int64
+		global.DB.Model(&model.MQTTTopicTemplate{}).Where("key = ?", t.Key).Count(&cnt)
+		if cnt == 0 {
+			if err := global.DB.Create(t).Error; err == nil {
+				inserted++
+			} else {
+				global.Logger.Warn("插入默认MQTT主题模板失败", zap.String("key", t.Key), zap.Error(err))
+			}
 		}
-		global.Logger.Info("已初始化默认MQTT主题模板")
+	}
+	if inserted > 0 {
+		global.Logger.Info("已补全默认MQTT主题模板", zap.Int("count", inserted))
 	}
 
 	var configCount int64

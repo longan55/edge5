@@ -12,6 +12,9 @@ type TaskCommand struct {
 	Address   string `json:"address"`
 	Offset    int    `json:"offset"`
 	ParseType string `json:"parseType"`
+	// Expr 上报前的计算表达式，x 表示设备读到的原始值，仅支持 + - * / ( ) 与数字。
+	// 例如 x*0.1、(x-4)*2.5+20；为空表示原样上报。仅对数值型点位生效。
+	Expr string `json:"expr,omitempty"`
 }
 
 // TaskCommands TaskCommand 切片，支持 GORM 自定义序列化
