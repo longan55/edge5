@@ -186,7 +186,7 @@ func (m *McService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle,
 	m.lock.Unlock()
 
 	if params == nil {
-		return nil, fmt.Errorf("设备未连接")
+		return nil, protocol.ErrNotConnected
 	}
 
 	client, _, err := m.buildClient(params)
@@ -272,7 +272,7 @@ func (m *McService) WriteBatch(ctx context.Context, handle protocol.DeviceHandle
 	m.lock.Unlock()
 
 	if params == nil {
-		return fmt.Errorf("设备未连接")
+		return protocol.ErrNotConnected
 	}
 
 	client, _, err := m.buildClient(params)

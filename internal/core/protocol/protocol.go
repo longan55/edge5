@@ -6,6 +6,7 @@ package protocol
 
 import (
 	"context"
+	"errors"
 )
 
 // DeviceHandle 设备句柄，Connect 返回，用于后续所有操作标识具体设备
@@ -13,6 +14,11 @@ type DeviceHandle uint64
 
 // InvalidHandle 表示无效的设备句柄
 const InvalidHandle DeviceHandle = 0
+
+// ErrNotConnected 设备连接已不存在（未建立或已被关闭）。
+// 协议实现统一返回该错误，采集/边缘计算任务据此触发重连，
+// 而不是原地反复重试同一个失效句柄。
+var ErrNotConnected = errors.New("设备未连接")
 
 type DeviceCommProtocol interface {
 	Info() Metadata

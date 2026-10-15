@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -285,7 +286,14 @@ func (s *TaskScheduler) runTask(ctx context.Context, taskID uint64, task *model.
 					s.logger.Info("任务协程退出", zap.Uint64("taskID", taskID))
 					return
 				case <-ticker.C:
-					s.executeRead(ctx, taskID, task, device, proto, handle, points, commandMap, exprMap)
+					if err := s.executeRead(ctx, taskID, task, device, proto, handle, points, commandMap, exprMap); err != nil {
+						if errors.Is(err, protocol.ErrNotConnected) {
+							s.logger.Warn("设备连接已失效，跳出采集循环并重连",
+								zap.Uint64("taskID", taskID),
+								zap.Uint64("deviceID", device.ID))
+							return
+						}
+					}
 				}
 			}
 		}()
@@ -320,7 +328,7 @@ func (s *TaskScheduler) updateDeviceStatus(deviceID uint64, online bool, message
 	}
 }
 
-func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *model.Task, device *model.Device, proto protocol.DeviceCommProtocol, handle protocol.DeviceHandle, points []protocol.Point, commandMap map[string]model.TaskCommand, exprMap map[string]*expr.Program) {
+func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *model.Task, device *model.Device, proto protocol.DeviceCommProtocol, handle protocol.DeviceHandle, points []protocol.Point, commandMap map[string]model.TaskCommand, exprMap map[string]*expr.Program) error {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("executeRead 发生 panic", zap.Uint64("taskID", taskID), zap.Any("panic", r))
@@ -332,10 +340,10 @@ func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *mo
 	})
 	if err != nil {
 		s.logger.Warn("读取数据失败", zap.Uint64("taskID", taskID), zap.Error(err))
-		return
+		return err
 	}
 	if len(resp.Results) == 0 {
-		return
+		return nil
 	}
 
 	dataMap := make(map[string]interface{})
@@ -381,10 +389,11 @@ func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *mo
 	}
 
 	if len(dataMap) == 0 {
-		return
+		return nil
 	}
 
 	s.reportData(task, device, dataMap)
+	return nil
 }
 
 func parseValue(raw []byte, parseType string) interface{} {

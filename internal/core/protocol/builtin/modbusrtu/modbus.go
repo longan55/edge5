@@ -25,13 +25,12 @@ func init() {
 
 // ModbusRTUService Modbus RTU 串口协议服务
 type ModbusRTUService struct {
-	lock      sync.Mutex
-	Clients   map[uint]*rtuMaster    // deviceID -> RTU 主站
-	SlaveIDs  map[uint]byte          // deviceID -> 站号（连接参数）
-	Timeouts  map[uint]time.Duration // deviceID -> 读响应超时（连接参数）
-	connected bool
-	deviceID  uint
-	portMap   map[uint]string // deviceID -> 串口（用于 Release）
+	lock     sync.Mutex
+	Clients  map[uint]*rtuMaster    // deviceID -> RTU 主站
+	SlaveIDs map[uint]byte          // deviceID -> 站号（连接参数）
+	Timeouts map[uint]time.Duration // deviceID -> 读响应超时（连接参数）
+	deviceID uint
+	portMap  map[uint]string // deviceID -> 串口（用于 Release）
 }
 
 // NewModbusRTUService 创建服务
@@ -101,7 +100,6 @@ func (m *ModbusRTUService) Connect(ctx context.Context, params protocol.Metadata
 
 	// 已连接则复用
 	if client, ok := m.Clients[deviceID]; ok && client != nil {
-		m.connected = true
 		m.deviceID = deviceID
 		return protocol.DeviceHandle(deviceID), nil
 	}
@@ -162,7 +160,6 @@ func (m *ModbusRTUService) Connect(ctx context.Context, params protocol.Metadata
 	m.SlaveIDs[deviceID] = slaveID
 	m.Timeouts[deviceID] = readTimeout
 	m.portMap[deviceID] = port
-	m.connected = true
 	m.deviceID = deviceID
 
 	if builtin.Logger != nil {
@@ -204,15 +201,13 @@ func (m *ModbusRTUService) Disconnect(ctx context.Context, handle protocol.Devic
 		delete(m.portMap, devID)
 	}
 
-	m.connected = false
-
 	if builtin.Logger != nil {
 		builtin.Logger.Info("Modbus-RTU 设备断开连接", zap.Uint("deviceID", devID))
 	}
 	return nil
 }
 
-// IsConnected 检查设备是否已连接
+// IsConnected 检查指定设备的串口连接是否仍存在
 func (m *ModbusRTUService) IsConnected(handle protocol.DeviceHandle) bool {
 	m.lock.Lock()
 	defer m.lock.Unlock()
@@ -223,7 +218,7 @@ func (m *ModbusRTUService) IsConnected(handle protocol.DeviceHandle) bool {
 	}
 
 	client, ok := m.Clients[devID]
-	return ok && client != nil && m.connected
+	return ok && client != nil
 }
 
 // ReadBatch 批量读取：同功能码连续地址合并为一次 Modbus 通信
@@ -238,7 +233,7 @@ func (m *ModbusRTUService) ReadBatch(ctx context.Context, handle protocol.Device
 
 	client, ok := m.Clients[devID]
 	if !ok || client == nil {
-		return nil, fmt.Errorf("设备未连接")
+		return nil, protocol.ErrNotConnected
 	}
 	slaveID := m.SlaveIDs[devID]
 
@@ -316,7 +311,7 @@ func (m *ModbusRTUService) WriteBatch(ctx context.Context, handle protocol.Devic
 
 	client, ok := m.Clients[devID]
 	if !ok || client == nil {
-		return fmt.Errorf("设备未连接")
+		return protocol.ErrNotConnected
 	}
 	slaveID := m.SlaveIDs[devID]
 

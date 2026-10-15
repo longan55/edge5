@@ -102,8 +102,18 @@ func testSingleDeviceConnection(ctx context.Context, device *model.Device) bool 
 	connParams["deviceID"] = float64(device.ID)
 	global.Logger.Debug("设备连接参数", zap.Any("params", connParams))
 
-	// 尝试连接
-	handle, err := proto.Connect(ctx, connParams)
+	// 已存在连接（如采集/边缘计算任务持有的持久连接）时直接判定在线：
+	// 协议 Connect 会复用该连接，若此处再 Connect+Disconnect 会把任务正在
+	// 使用的连接（Modbus-RTU 的串口、A1E/MC 的持久连接）从协议单例中删除，
+	// 导致任务后续读取永久报"设备未连接"。
+	handle := protocol.DeviceHandle(device.ID)
+	if proto.IsConnected(handle) {
+		global.Logger.Debug("设备已连接（复用中），跳过连接测试", zap.Uint64("deviceID", device.ID))
+		return true
+	}
+
+	// 未连接才建立临时连接做测试，测试完立即断开
+	handle, err = proto.Connect(ctx, connParams)
 	if err != nil {
 		global.Logger.Debug("设备连接失败", zap.Uint64("deviceID", device.ID), zap.Error(err))
 		return false

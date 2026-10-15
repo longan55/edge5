@@ -306,7 +306,7 @@ func (m *A1EService) ReadBatch(ctx context.Context, handle protocol.DeviceHandle
 	m.lock.Unlock()
 
 	if !ok || ac == nil || ac.conn == nil {
-		return nil, fmt.Errorf("设备未连接")
+		return nil, protocol.ErrNotConnected
 	}
 
 	// ioLock 串行化网络 I/O：A1E 为请求-响应协议且持久连接复用，
@@ -392,7 +392,7 @@ func (m *A1EService) WriteBatch(ctx context.Context, handle protocol.DeviceHandl
 	m.lock.Unlock()
 
 	if !ok || ac == nil || ac.conn == nil {
-		return fmt.Errorf("设备未连接")
+		return protocol.ErrNotConnected
 	}
 
 	// ioLock 串行化网络 I/O，与 ReadBatch/Connect/Disconnect 共用

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -345,7 +346,14 @@ func (s *EdgeTaskScheduler) runTask(ctx context.Context, taskID uint64, task *mo
 				case <-ctx.Done():
 					return
 				case <-sampleTicker.C:
-					s.executeSample(ctx, task, device, proto, handle, eng, points, entry)
+					if err := s.executeSample(ctx, task, device, proto, handle, eng, points, entry); err != nil {
+						if errors.Is(err, protocol.ErrNotConnected) {
+							s.logger.Warn("边缘计算设备连接已失效，跳出采样循环并重连",
+								zap.Uint64("taskID", task.ID),
+								zap.Uint64("deviceID", device.ID))
+							return
+						}
+					}
 				case <-reportTicker.C:
 					s.flushReport(task, device, entry)
 				}
@@ -368,7 +376,7 @@ func (s *EdgeTaskScheduler) runTask(ctx context.Context, taskID uint64, task *mo
 // 不直接 publish 到 MQTT，由 flushReport 在上报间隔到来时统一发送。
 func (s *EdgeTaskScheduler) executeSample(ctx context.Context, task *model.EdgeTask, device *model.Device,
 	proto protocol.DeviceCommProtocol, handle protocol.DeviceHandle, eng *edge.Engine, points []protocol.Point,
-	entry *edgeTaskEntry) {
+	entry *edgeTaskEntry) error {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("边缘计算 executeSample panic", zap.Uint64("taskID", task.ID), zap.Any("panic", r))
@@ -376,16 +384,16 @@ func (s *EdgeTaskScheduler) executeSample(ctx context.Context, task *model.EdgeT
 	}()
 
 	if len(points) == 0 {
-		return
+		return nil
 	}
 
 	resp, err := proto.ReadBatch(ctx, handle, protocol.BatchReadRequest{Points: points})
 	if err != nil {
 		s.logger.Warn("边缘计算采样读取失败", zap.Uint64("taskID", task.ID), zap.Error(err))
-		return
+		return err
 	}
 	if resp == nil || len(resp.Results) == 0 {
-		return
+		return nil
 	}
 
 	// 仅采集质量良好的数值点位（key=address）
@@ -399,7 +407,7 @@ func (s *EdgeTaskScheduler) executeSample(ctx context.Context, task *model.EdgeT
 		}
 	}
 	if len(rawValues) == 0 {
-		return
+		return nil
 	}
 
 	// 应用点位计算表达式（x=原始值），输出 key=Var 名；表达式启动时已编译
@@ -434,7 +442,7 @@ func (s *EdgeTaskScheduler) executeSample(ctx context.Context, task *model.EdgeT
 		values[in.Var] = v
 	}
 	if len(values) == 0 {
-		return
+		return nil
 	}
 
 	now := time.Now()
@@ -461,6 +469,7 @@ func (s *EdgeTaskScheduler) executeSample(ctx context.Context, task *model.EdgeT
 	for k, v := range result.Outputs {
 		entry.latestOutputs[k] = v
 	}
+	return nil
 }
 
 // flushReport 上报拍：把 latestOutputs 拷贝后 publish 到 MQTT。
