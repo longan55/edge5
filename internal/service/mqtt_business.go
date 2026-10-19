@@ -272,20 +272,33 @@ func (s *MQTTBusinessService) doRegister() bool {
 	// 立即发送第一帧
 	s.publishGatewayRegister(topic, msg)
 
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
+	// 指数退避：长时间收不到响应时逐步加长发送间隔，避免对 Broker 造成压力
+	const (
+		initialInterval = 10 * time.Second
+		maxInterval     = 5 * time.Minute
+	)
+	interval := initialInterval
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			return false
-		case <-ticker.C:
+		case <-timer.C:
 			if global.GetGatewayRegistered() {
 				return true
 			}
 			msg.Timestamp = time.Now().UnixMilli()
 			msg.RequestID = model.GenerateRequestID()
 			s.publishGatewayRegister(topic, msg)
+			// 未收到响应，下次发送间隔翻倍（封顶 maxInterval）
+			interval *= 2
+			if interval > maxInterval {
+				interval = maxInterval
+			}
+			s.logger.Info("注册请求未收到响应，加长发送间隔", zap.Duration("nextInterval", interval))
+			timer.Reset(interval)
 		}
 	}
 }
