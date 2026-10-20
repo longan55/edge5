@@ -26,11 +26,6 @@
           <span>采集任务</span>
         </el-menu-item>
 
-        <el-menu-item index="/edge/task">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>边缘计算</span>
-        </el-menu-item>
-
         <el-menu-item index="/mqtt/config">
           <el-icon><Connection /></el-icon>
           <span>MQTT配置</span>

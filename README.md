@@ -471,7 +471,6 @@ go build -o edge5-server.exe cmd/server/main.go
 
 - 插件市场
 - 多协议并行采集
-- 边缘计算能力
 
 ---
 

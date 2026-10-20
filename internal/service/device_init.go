@@ -102,7 +102,7 @@ func testSingleDeviceConnection(ctx context.Context, device *model.Device) bool 
 	connParams["deviceID"] = float64(device.ID)
 	global.Logger.Debug("设备连接参数", zap.Any("params", connParams))
 
-	// 已存在连接（如采集/边缘计算任务持有的持久连接）时直接判定在线：
+	// 已存在连接（如采集任务持有的持久连接）时直接判定在线：
 	// 协议 Connect 会复用该连接，若此处再 Connect+Disconnect 会把任务正在
 	// 使用的连接（Modbus-RTU 的串口、A1E/MC 的持久连接）从协议单例中删除，
 	// 导致任务后续读取永久报"设备未连接"。

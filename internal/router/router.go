@@ -33,8 +33,7 @@ func SetupRouter(mode string) *gin.Engine {
 	deviceRepo := repository.NewDeviceRepository(global.DB)
 	deviceStatusRepo := repository.NewDeviceStatusRepository(global.DB)
 	taskRepo := repository.NewTaskRepository(global.DB, global.Logger)
-	edgeTaskRepo := repository.NewEdgeTaskRepository(global.DB, global.Logger)
-	deviceService := service.NewDeviceService(deviceRepo, deviceStatusRepo, taskRepo, edgeTaskRepo)
+	deviceService := service.NewDeviceService(deviceRepo, deviceStatusRepo, taskRepo)
 	deviceHandler := handler.NewDeviceHandler(deviceService)
 
 	r.GET("/api/captcha", authHandler.GetCaptcha)
@@ -137,23 +136,6 @@ func SetupRouter(mode string) *gin.Engine {
 
 			// 获取设备协议的采集参数 Schema（使用固定前缀避免与 :id 冲突）
 			protected.GET("/task/device-read-params-schema/:deviceId", taskHandler.GetReadParamsSchema)
-
-			// 边缘计算任务
-			edgeHandler := handler.NewEdgeTaskHandler(global.Logger)
-			edgeGroup := protected.Group("/edge")
-			{
-				edgeGroup.GET("/functions", edgeHandler.Functions)
-				edgeGroup.GET("/list", edgeHandler.List)
-				edgeGroup.GET("/:id", edgeHandler.Get)
-				edgeGroup.GET("/:id/data", edgeHandler.Data)
-				edgeGroup.POST("", edgeHandler.Create)
-				edgeGroup.PUT("/:id", edgeHandler.Update)
-				edgeGroup.DELETE("/:id", edgeHandler.Delete)
-				edgeGroup.POST("/batch-delete", edgeHandler.DeleteBatch)
-				edgeGroup.POST("/:id/start", edgeHandler.Start)
-				edgeGroup.POST("/:id/stop", edgeHandler.Stop)
-				edgeGroup.GET("/:id/analyze", edgeHandler.Analyze)
-			}
 		}
 	}
 

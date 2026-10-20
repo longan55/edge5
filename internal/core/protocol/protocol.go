@@ -16,7 +16,7 @@ type DeviceHandle uint64
 const InvalidHandle DeviceHandle = 0
 
 // ErrNotConnected 设备连接已不存在（未建立或已被关闭）。
-// 协议实现统一返回该错误，采集/边缘计算任务据此触发重连，
+// 协议实现统一返回该错误，采集任务据此触发重连，
 // 而不是原地反复重试同一个失效句柄。
 var ErrNotConnected = errors.New("设备未连接")
 

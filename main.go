@@ -81,9 +81,6 @@ func run() error {
 			if scheduler != nil {
 				scheduler.FlushAllCache()
 			}
-			if edgeScheduler := service.GetEdgeTaskScheduler(); edgeScheduler != nil {
-				edgeScheduler.FlushAllCache()
-			}
 		})
 	}
 
@@ -96,7 +93,6 @@ func run() error {
 	r := router.SetupRouter(config.CONFIG.Server.Mode)
 
 	service.StartAllTasks()
-	service.StartAllEdgeTasks()
 
 	srv := &http.Server{
 		Addr:           fmt.Sprintf("%s:%d", config.CONFIG.Server.Host, config.CONFIG.Server.Port),
@@ -147,7 +143,7 @@ func autoMigrate() error {
 }
 
 func initDefaultTopics() {
-	// 按 key 补插缺失的默认主题模板：新库全部插入，老库仅补齐新增 key（如 edge_data_up），
+	// 按 key 补插缺失的默认主题模板：新库全部插入，老库仅补齐新增 key，
 	// 已存在（含用户已修改）的模板不覆盖，保证“默认支持且可在 MQTT 主题页面更新”。
 	defaults := repository.GetDefaultTopics()
 	inserted := 0

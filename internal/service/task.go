@@ -360,7 +360,7 @@ func (s *TaskScheduler) executeRead(ctx context.Context, taskID uint64, task *mo
 		value := result.Value
 		// 应用点位计算表达式（x=原始值）；非数值类型或求值失败时回退为原始值
 		if prog, hasExpr := exprMap[result.PointName]; hasExpr {
-			if raw, ok := edgeToFloat(result.Value); ok {
+			if raw, ok := toFloat(result.Value); ok {
 				computed, evalErr := prog.Eval(map[string]float64{"x": raw})
 				if evalErr != nil {
 					s.logger.Warn("点位表达式计算失败，上报原始值",
@@ -451,6 +451,42 @@ func mustParseFloat32(bits uint32) float32 {
 
 func mustParseFloat64(bits uint64) float64 {
 	return *(*float64)(unsafe.Pointer(&bits))
+}
+
+// toFloat 把协议返回的标量值统一转为 float64（点位计算表达式求值基于数值）
+func toFloat(v interface{}) (float64, bool) {
+	switch x := v.(type) {
+	case float64:
+		return x, true
+	case float32:
+		return float64(x), true
+	case int:
+		return float64(x), true
+	case int8:
+		return float64(x), true
+	case int16:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case uint:
+		return float64(x), true
+	case uint8:
+		return float64(x), true
+	case uint16:
+		return float64(x), true
+	case uint32:
+		return float64(x), true
+	case uint64:
+		return float64(x), true
+	case bool:
+		if x {
+			return 1, true
+		}
+		return 0, true
+	}
+	return 0, false
 }
 
 func (s *TaskScheduler) cacheData(taskID uint64, record TaskDataRecord) {

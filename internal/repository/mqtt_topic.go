@@ -117,6 +117,5 @@ func GetDefaultTopics() []*model.MQTTTopicTemplate {
 		{Key: "device_data_up", DisplayName: "设备数据上报", Direction: "up", Path: "{gatewaySn}/{deviceSn}/data", IsDefault: true, Sort: 9},
 		{Key: "device_cmd_down", DisplayName: "设备指令", Direction: "down", Path: "{gatewaySn}/command", IsDefault: true, Sort: 10},
 		{Key: "device_cmd_reply_up", DisplayName: "设备指令响应", Direction: "up", Path: "{gatewaySn}/command/reply", IsDefault: true, Sort: 11},
-		{Key: "edge_data_up", DisplayName: "边缘计算数据上报", Direction: "up", Path: "{gatewaySn}/{deviceSn}/edge/data", IsDefault: true, Sort: 12},
 	}
 }

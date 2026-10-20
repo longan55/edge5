@@ -46,12 +46,6 @@ const routes = [
         name: 'TaskList',
         component: () => import('@/views/task/Task.vue'),
         meta: { title: '采集任务' }
-      },
-      {
-        path: '/edge/task',
-        name: 'EdgeTaskList',
-        component: () => import('@/views/edge/EdgeTask.vue'),
-        meta: { title: '边缘计算' }
       }
     ]
   }
